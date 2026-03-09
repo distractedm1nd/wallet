@@ -129,9 +129,14 @@ err-init-config-db-mismatch =
 
 err-init-identity-not-found = Encryption identity file could not be located at {$path}
 err-init-identity-not-passphrase-encrypted = {$path} is not encrypted with a passphrase
+err-init-identity-file-creation = Failed to create encryption identity file: {$error}
+err-init-passphrase-read = Failed to read or generate passphrase: {$error}
 err-init-path-not-utf8 = {$path} is not currently supported (not UTF-8)
 err-init-identity-not-usable = Identity file at {$path} is not usable: {$error}
 err-init-rpc-auth-invalid = Invalid '{-cfg-rpc-auth}' configuration
+
+err-file-clobber =
+    Operation would overwrite an existing file at '{$path}', aborting.
 
 ## Keystore errors
 

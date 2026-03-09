@@ -23,8 +23,9 @@ impl AsyncRunnable for InitWalletEncryptionCmd {
         let _lock = config.lock_datadir()?;
 
         let db = Database::open(&config).await?;
-        let path = config
-            .encryption_identity()
+
+        let path = config.encryption_identity();
+        let path_string = path
             .to_str()
             .ok_or_else(|| {
                 ErrorKind::Init.context(fl!(
@@ -33,8 +34,13 @@ impl AsyncRunnable for InitWalletEncryptionCmd {
                 ))
             })?
             .to_string();
+        if let Ok(true) = tokio::fs::try_exists(&path).await {
+            return Err(ErrorKind::Generic
+                .context(fl!("err-file-clobber", path = &path))
+                .into());
+        }
 
-        generate_identity_file(&path, self.mode)?;
+        generate_identity_file(path_string.clone(), self.mode)?;
 
         let keystore = KeyStore::new(&config, db)?;
 
@@ -51,7 +57,7 @@ impl AsyncRunnable for InitWalletEncryptionCmd {
             Some(identity_file) => Ok(identity_file),
             _ => {
                 // Re-read the identity file from disk.
-                age::IdentityFile::from_file(path.to_string())
+                age::IdentityFile::from_file(path_string)
             }
         }
         .map_err(|e| ErrorKind::Generic.context(e))?;
@@ -79,21 +85,18 @@ impl Runnable for InitWalletEncryptionCmd {
 }
 
 /// Handles the creation of a new identity file, if necessary.
-fn generate_identity_file(path: &str, mode: IdentityFileMode) -> Result<(), Error> {
+fn generate_identity_file(path: String, mode: IdentityFileMode) -> Result<(), Error> {
     if matches!(mode, IdentityFileMode::UseExisting) {
         return Ok(());
     }
 
-    let out = OutputWriter::new(
-        Some(path.to_string()),
-        false,
-        OutputFormat::Text,
-        0o600,
-        false,
-    )
-    .map_err(|e| {
-        ErrorKind::Init.context(format!("Failed to create encryption identity file: {}", e))
-    })?;
+    let out = OutputWriter::new(Some(path.clone()), false, OutputFormat::Text, 0o600, false)
+        .map_err(|e| {
+            ErrorKind::Init.context(fl!(
+                "err-init-identity-file-creation",
+                error = e.to_string()
+            ))
+        })?;
 
     let sk = age::x25519::Identity::generate();
     let pk = sk.to_public();
@@ -116,7 +119,7 @@ fn generate_identity_file(path: &str, mode: IdentityFileMode) -> Result<(), Erro
                 }
                 Err(e) => {
                     return Err(ErrorKind::Init
-                        .context(format!("Failed to read or generate passphrase: {}", e))
+                        .context(fl!("err-init-passphrase-read", error = e.to_string()))
                         .into());
                 }
             };

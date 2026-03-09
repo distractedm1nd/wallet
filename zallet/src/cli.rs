@@ -201,6 +201,7 @@ pub(crate) struct MigrateZcashdWalletCmd {
     pub(crate) this_is_alpha_code_and_you_will_need_to_redo_the_migration_later: bool,
 }
 
+#[cfg(zallet_build = "wallet")]
 #[derive(clap::ValueEnum, Debug, Clone, Copy, Default)]
 pub enum IdentityFileMode {
     #[default]
