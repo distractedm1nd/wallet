@@ -358,6 +358,26 @@ Only Sapling extended spending keys are supported.
 - `startHeight` (numeric, optional, default=0) Block height from which to begin
   the rescan. Only used when rescan is "yes" or "whenkeyisnew" (for a new key).
 
+## `z_importviewingkey`
+
+*Only available in wallet builds of Zallet.*
+
+Imports a Sapling viewing key into the wallet.
+
+Only Sapling extended full viewing keys are supported. The wallet will track
+incoming and outgoing transactions for addresses derived from this key, but
+will not have spending authority.
+
+#### Arguments
+
+- `vkey` (string, required) The viewing key (see `z_exportviewingkey`).
+- `rescan` (string, optional, default="whenkeyisnew") Whether to rescan the
+  blockchain for transactions ("yes", "no", or "whenkeyisnew"). When rescan is
+  enabled, the wallet's background sync engine will scan for historical
+  transactions from the given start height.
+- `startHeight` (numeric, optional, default=0) Block height from which to begin
+  the rescan. Only used when rescan is "yes" or "whenkeyisnew" (for a new key).
+
 ## `z_listaccounts`
 
 Returns the list of accounts created with `z_getnewaccount` or `z_recoveraccounts`.
