@@ -209,6 +209,16 @@ sign anything that reveals more.
 
 Returns an OpenRPC schema as a description of this service.
 
+## `signmessage`
+
+*Only available in wallet builds of Zallet.*
+
+Sign a message with the private key of a transparent address.
+
+#### Arguments
+- `t_addr` (string, required): The transparent address to use to look up the private key that will be used to sign the message.
+- `message` (string, required): The message to create a signature of.
+
 ## `stop`
 
 Stop the running zallet process.

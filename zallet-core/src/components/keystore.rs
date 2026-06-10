@@ -139,7 +139,7 @@ use crate::fl;
 
 use sapling::zip32::{DiversifiableFullViewingKey, ExtendedSpendingKey};
 
-#[cfg(feature = "zcashd-import")]
+#[cfg(feature = "transparent-key-import")]
 use {transparent::address::TransparentAddress, zcash_keys::address::Address};
 
 pub(super) mod db;
@@ -1110,7 +1110,7 @@ impl KeyStore {
         Ok(None)
     }
 
-    #[cfg(feature = "zcashd-import")]
+    #[cfg(feature = "transparent-key-import")]
     pub(crate) async fn decrypt_standalone_transparent_key(
         &self,
         address: &TransparentAddress,
@@ -1256,7 +1256,7 @@ impl Encryptor {
         encrypt_secret(&self.recipients, &secret)
     }
 
-    #[cfg(feature = "transparent-key-import")]
+    #[cfg(feature = "zcashd-import")]
     fn encrypt_standalone_transparent_privkey(
         &self,
         key: &secp256k1::SecretKey,
@@ -1308,7 +1308,7 @@ impl EncryptedStandaloneSaplingKey {
     }
 }
 
-#[cfg(feature = "transparent-key-import")]
+#[cfg(feature = "zcashd-import")]
 pub(crate) struct EncryptedStandaloneTransparentKey {
     pubkey: secp256k1::PublicKey,
     encrypted_key_bytes: Vec<u8>,

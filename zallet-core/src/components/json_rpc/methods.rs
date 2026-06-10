@@ -71,6 +71,8 @@ mod pczt_prove;
 mod pczt_sign;
 #[cfg(zallet_build = "wallet")]
 mod recover_accounts;
+#[cfg(zallet_build = "wallet")]
+mod sign_message;
 mod stop;
 #[cfg(zallet_build = "wallet")]
 mod unlock_wallet;
@@ -961,6 +963,14 @@ pub(crate) trait WalletRpc {
     /// - `pczt` (string, required) The base64-encoded PCZT to extract from.
     #[method(name = "pczt_extract")]
     async fn pczt_extract(&self, pczt: &str) -> pczt_extract::Response;
+
+    /// Sign a message with the private key of a transparent address.
+    ///
+    /// # Arguments
+    /// - `t_addr` (string, required): The transparent address to use to look up the private key that will be used to sign the message.
+    /// - `message` (string, required): The message to create a signature of.
+    #[method(name = "signmessage")]
+    async fn sign_message(&self, t_addr: &str, message: &str) -> sign_message::Response;
 }
 
 pub(crate) struct RpcImpl<C: Chain> {
@@ -1486,5 +1496,15 @@ impl<C: Chain> WalletRpcServer for WalletRpcImpl<C> {
     async fn pczt_extract(&self, pczt: &str) -> pczt_extract::Response {
         self.general.ensure_synced()?;
         pczt_extract::call(self.wallet().await?, pczt).await
+    }
+
+    async fn sign_message(&self, t_addr: &str, message: &str) -> sign_message::Response {
+        sign_message::call(
+            self.wallet().await?.as_ref(),
+            &self.keystore,
+            t_addr,
+            message,
+        )
+        .await
     }
 }
