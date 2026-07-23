@@ -7,6 +7,7 @@ use jsonrpsee::{
 use crate::components::{
     chain::Chain,
     database::{Database, DbHandle},
+    sync::SyncStatusReader,
 };
 
 #[cfg(zallet_build = "wallet")]
@@ -929,6 +930,7 @@ pub(crate) struct RpcImpl<C: Chain> {
     #[cfg(zallet_build = "wallet")]
     keystore: KeyStore,
     chain: C,
+    sync_status: SyncStatusReader,
 }
 
 impl<C: Chain> RpcImpl<C> {
@@ -937,12 +939,14 @@ impl<C: Chain> RpcImpl<C> {
         wallet: Database,
         #[cfg(zallet_build = "wallet")] keystore: KeyStore,
         chain: C,
+        sync_status: SyncStatusReader,
     ) -> Self {
         Self {
             wallet,
             #[cfg(zallet_build = "wallet")]
             keystore,
             chain,
+            sync_status,
         }
     }
 
@@ -955,6 +959,13 @@ impl<C: Chain> RpcImpl<C> {
 
     async fn chain(&self) -> RpcResult<C> {
         Ok(self.chain.clone())
+    }
+
+    /// Returns an error if the wallet is not synced enough for balance or spend methods to
+    /// operate on a trustworthy view of the chain.
+    #[cfg(zallet_build = "wallet")]
+    fn ensure_synced(&self) -> RpcResult<()> {
+        self.sync_status.ensure_available()
     }
 }
 
@@ -974,9 +985,10 @@ impl<C: Chain> WalletRpcImpl<C> {
         keystore: KeyStore,
         chain_view: C,
         decryptor: WalletDecryptorHandle,
+        sync_status: SyncStatusReader,
     ) -> Self {
         Self {
-            general: RpcImpl::new(wallet, keystore.clone(), chain_view),
+            general: RpcImpl::new(wallet, keystore.clone(), chain_view, sync_status),
             keystore,
             decryptor,
             async_ops: RwLock::new(Vec::new()),
@@ -1007,7 +1019,12 @@ impl<C: Chain> WalletRpcImpl<C> {
 #[async_trait]
 impl<C: Chain> RpcServer for RpcImpl<C> {
     async fn get_wallet_status(&self) -> get_wallet_status::Response {
-        get_wallet_status::call(self.wallet().await?.as_ref(), self.chain().await?).await
+        get_wallet_status::call(
+            self.wallet().await?.as_ref(),
+            self.chain().await?,
+            self.sync_status.clone(),
+        )
+        .await
     }
 
     async fn list_accounts(&self, include_addresses: Option<bool>) -> list_accounts::Response {
@@ -1209,6 +1226,7 @@ impl<C: Chain> WalletRpcServer for WalletRpcImpl<C> {
     }
 
     async fn get_balances(&self, minconf: Option<u32>) -> get_balances::Response {
+        self.general.ensure_synced()?;
         get_balances::call(self.wallet().await?.as_ref(), minconf)
     }
 
@@ -1217,6 +1235,7 @@ impl<C: Chain> WalletRpcServer for WalletRpcImpl<C> {
         account: JsonValue,
         minconf: Option<u32>,
     ) -> z_get_balance_for_account::Response {
+        self.general.ensure_synced()?;
         z_get_balance_for_account::call(
             self.wallet().await?.as_ref(),
             &self.keystore,
@@ -1263,6 +1282,7 @@ impl<C: Chain> WalletRpcServer for WalletRpcImpl<C> {
         minconf: Option<u32>,
         include_watchonly: Option<bool>,
     ) -> z_get_total_balance::Response {
+        self.general.ensure_synced()?;
         z_get_total_balance::call(self.wallet().await?.as_ref(), minconf, include_watchonly)
     }
 
@@ -1274,6 +1294,7 @@ impl<C: Chain> WalletRpcServer for WalletRpcImpl<C> {
         addresses: Option<Vec<String>>,
         as_of_height: Option<i64>,
     ) -> list_unspent::Response {
+        self.general.ensure_synced()?;
         list_unspent::call(
             self.wallet().await?.as_ref(),
             minconf,
@@ -1289,6 +1310,7 @@ impl<C: Chain> WalletRpcServer for WalletRpcImpl<C> {
         minconf: Option<u32>,
         as_of_height: Option<i64>,
     ) -> get_notes_count::Response {
+        self.general.ensure_synced()?;
         get_notes_count::call(self.wallet().await?.as_ref(), minconf, as_of_height)
     }
 
@@ -1328,6 +1350,7 @@ impl<C: Chain> WalletRpcServer for WalletRpcImpl<C> {
                     self.wallet().await?,
                     self.keystore.clone(),
                     self.chain().await?,
+                    self.general.sync_status.clone(),
                     fromaddress,
                     amounts,
                     minconf,
@@ -1352,6 +1375,7 @@ impl<C: Chain> WalletRpcServer for WalletRpcImpl<C> {
             self.wallet().await?,
             self.keystore.clone(),
             self.chain().await?,
+            self.general.sync_status.clone(),
             fromaddress,
             toaddress,
             fee,
