@@ -218,7 +218,9 @@ jobs:
         # "error[E0658]: `let` expressions in this position are unstable".
         # 2.x has a stable MSRV and the same `--no-build` interface we use.
         # --locked builds against cargo-deb's own lockfile (reproducible deps).
-        run: cargo install cargo-deb --version "^2.10" --locked
+        # Pin to exact version to prevent a malicious compatible 2.x release from
+          # executing during installation while the signing key is available.
+          run: cargo install cargo-deb --version "=2.10.0" --locked
 
       # The amd64 and arm64 build jobs each upload a distinct per-arch artifact
       # (`<name>-amd64`, `<name>-arm64`) because v4+ artifacts are immutable and
