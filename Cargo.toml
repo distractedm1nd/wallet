@@ -81,6 +81,7 @@ rand = "0.8"
 
 # Secret management
 secrecy = { version = "0.8", features = ["serde"] }
+subtle = "2"
 
 # CLI
 abscissa_core = "0.9"
