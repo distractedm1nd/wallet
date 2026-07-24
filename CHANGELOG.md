@@ -79,6 +79,23 @@ be considered breaking changes.
   initialized wallet, or a running `zallet start`. The command argument may
   now be passed bare (`zallet rpc help getwalletinfo`) in addition to the
   JSON-quoted form.
+- The `FullPrivacy` policy (and every stricter-than-`AllowRevealedAmounts`
+  policy) now rejects value crossing between any pair of shielded pools,
+  including crossings into or out of the Ironwood pool, instead of only
+  Sapling/Orchard crossings.
+- `generate-encryption-identity --passphrase` now rejects an empty passphrase,
+  which would have produced an effectively unencrypted identity file.
+- The data directory is now restricted to mode 0700 and the wallet database
+  file to 0600 on Unix.
+- JSON-RPC calls are now logged by method name only; call parameters and
+  responses (which can carry secrets) are no longer written to logs.
+- The `builder.limits.orchard_actions` transaction-size limit now applies to
+  each shielded pool's spends and outputs, not only Orchard's.
+- `zallet rpc help` is now answered locally instead of being sent to the
+  wallet's JSON-RPC server, so it no longer requires a config file, an
+  initialized wallet, or a running `zallet start`. The command argument may
+  now be passed bare (`zallet rpc help getwalletinfo`) in addition to the
+  JSON-quoted form.
 - The standalone release binaries are now published as one signed archive per
   platform, `zallet-<version>-<arch>.tar.gz`, containing all three binaries
   (`zallet`, `zallet-zebra`, `zallet-zaino`). Previously each binary was a
