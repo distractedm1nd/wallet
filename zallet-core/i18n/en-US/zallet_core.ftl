@@ -136,6 +136,7 @@ err-init-cannot-find-home-dir =
     Cannot find home directory for the default datadir. Use '{-datadir}' to set
     the datadir directly.
 err-init-failed-to-create-lockfile = Failed to create a lockfile at {$path}: {$error}
+err-init-failed-to-restrict-permissions = Failed to restrict permissions on {$path}: {$error}
 err-init-failed-to-read-lockfile = Failed to read lockfile at {$path}: {$error}
 err-init-zallet-already-running =
     Cannot obtain a lock on data directory {$datadir}. {-zallet} is probably already running.
