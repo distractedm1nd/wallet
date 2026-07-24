@@ -227,7 +227,10 @@ pub(super) fn propose_and_check(
                     max_sapling_available - value,
                 ) {
                     (false, None) => {
-                        return Err(IncompatiblePrivacyPolicy::RevealingSaplingAmount.into());
+                        return Err(IncompatiblePrivacyPolicy::RevealingShieldedAmount(
+                            ShieldedPool::Sapling,
+                        )
+                        .into());
                     }
                     (false, Some(rest)) => max_sapling_available = rest,
                     (true, _) => (),
@@ -561,10 +564,6 @@ fn step_privacy_requirement<NoteRef>(
 ) -> Option<(PrivacyPolicy, IncompatiblePrivacyPolicy)> {
     let has_transparent_recipient = step.output_in_pool(PoolType::Transparent);
     let has_transparent_change = step.change_in_pool(PoolType::Transparent);
-    let has_sapling_recipient =
-        step.output_in_pool(PoolType::SAPLING) || step.change_in_pool(PoolType::SAPLING);
-    let has_orchard_recipient =
-        step.output_in_pool(PoolType::ORCHARD) || step.change_in_pool(PoolType::ORCHARD);
 
     if step.input_in_pool(PoolType::Transparent) {
         let received_addrs = step
@@ -608,24 +607,52 @@ fn step_privacy_requirement<NoteRef>(
             PrivacyPolicy::AllowRevealedRecipients,
             IncompatiblePrivacyPolicy::TransparentChange,
         ))
-    } else if step.input_in_pool(PoolType::ORCHARD) && has_sapling_recipient {
+    } else if let Some(pool) = shielded_pool_crossed_into(step) {
         // TODO: This should only trigger when there is a non-fee valueBalance.
-        // TODO: Determine whether this is due to the presence of an explicit Sapling
-        // recipient address, or having insufficient funds to pay a UA within a single pool.
+        // TODO: Determine whether this is due to the presence of an explicit
+        // recipient address in that pool, or having insufficient funds to pay a
+        // UA within a single pool.
         Some((
             PrivacyPolicy::AllowRevealedAmounts,
-            IncompatiblePrivacyPolicy::RevealingSaplingAmount,
-        ))
-    } else if step.input_in_pool(PoolType::SAPLING) && has_orchard_recipient {
-        // TODO: This should only trigger when there is a non-fee valueBalance.
-        Some((
-            PrivacyPolicy::AllowRevealedAmounts,
-            IncompatiblePrivacyPolicy::RevealingOrchardAmount,
+            IncompatiblePrivacyPolicy::RevealingShieldedAmount(pool),
         ))
     } else {
         // Nothing is revealed by this step.
         None
     }
+}
+
+/// Every shielded pool, for the privacy checks below, which must consider all cross-pool
+/// value flows.
+///
+/// Written as a match so that adding a `ShieldedPool` variant fails compilation here,
+/// forcing the new pool to be modeled by the privacy policy rather than bypassing it.
+fn all_shielded_pools() -> [ShieldedPool; 3] {
+    match ShieldedPool::Sapling {
+        ShieldedPool::Sapling | ShieldedPool::Orchard | ShieldedPool::Ironwood => [
+            ShieldedPool::Sapling,
+            ShieldedPool::Orchard,
+            ShieldedPool::Ironwood,
+        ],
+    }
+}
+
+/// Returns a shielded pool that the given step moves value into from a different
+/// shielded pool, if any.
+///
+/// Crossing between shielded pools reveals the crossing amount in the transaction's
+/// public value balances, so it requires [`PrivacyPolicy::AllowRevealedAmounts`].
+fn shielded_pool_crossed_into<NoteRef>(step: &Step<NoteRef>) -> Option<ShieldedPool> {
+    let input_pools = all_shielded_pools()
+        .into_iter()
+        .filter(|pool| step.input_in_pool(PoolType::Shielded(*pool)))
+        .collect::<Vec<_>>();
+
+    all_shielded_pools().into_iter().find(|pool| {
+        (step.output_in_pool(PoolType::Shielded(*pool))
+            || step.change_in_pool(PoolType::Shielded(*pool)))
+            && input_pools.iter().any(|input_pool| input_pool != pool)
+    })
 }
 
 pub(super) fn enforce_privacy_policy<FeeRuleT, NoteRef>(
@@ -720,12 +747,9 @@ pub(super) enum IncompatiblePrivacyPolicy {
     TransparentReceiver,
 
     /// Requested [`PrivacyPolicy`] doesn’t include `AllowRevealedAmounts`, but we don’t
-    /// have enough Sapling funds to avoid revealing amounts.
-    RevealingSaplingAmount,
-
-    /// Requested [`PrivacyPolicy`] doesn’t include `AllowRevealedAmounts`, but we don’t
-    /// have enough Orchard funds to avoid revealing amounts.
-    RevealingOrchardAmount,
+    /// have enough funds in the given shielded pool to avoid revealing amounts by
+    /// crossing into it from another pool.
+    RevealingShieldedAmount(ShieldedPool),
 
     /// Requested [`PrivacyPolicy`] doesn’t include `AllowRevealedAmounts`, but we are
     /// trying to pay a UA where we don’t have enough funds in any single pool that it has
@@ -795,18 +819,12 @@ impl From<IncompatiblePrivacyPolicy> for ErrorObjectOwned {
                     policy = "AllowRevealedRecipients"
                 )
             ),
-            IncompatiblePrivacyPolicy::RevealingSaplingAmount => format!(
+            IncompatiblePrivacyPolicy::RevealingShieldedAmount(pool) => format!(
                 "{} {}",
-                fl!("err-privpol-revealing-amount-not-allowed", pool = "Sapling"),
                 fl!(
-                    "rec-privpol-privacy-weakening",
-                    parameter = "privacyPolicy",
-                    policy = "AllowRevealedAmounts"
-                )
-            ),
-            IncompatiblePrivacyPolicy::RevealingOrchardAmount => format!(
-                "{} {}",
-                fl!("err-privpol-revealing-amount-not-allowed", pool = "Orchard"),
+                    "err-privpol-revealing-amount-not-allowed",
+                    pool = PoolType::Shielded(pool).to_string()
+                ),
                 fl!(
                     "rec-privpol-privacy-weakening",
                     parameter = "privacyPolicy",
