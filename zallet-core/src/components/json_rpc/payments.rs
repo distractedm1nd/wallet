@@ -339,48 +339,18 @@ pub(super) fn propose_and_check(
 
     enforce_privacy_policy(&proposal, privacy_policy)?;
 
-    let orchard_actions_limit = APP.config().builder.limits.orchard_actions().into();
-    for step in proposal.steps() {
-        let orchard_spends = step
-            .shielded_inputs()
-            .iter()
-            .flat_map(|inputs| inputs.notes())
-            .filter(|note| note.note().pool() == ShieldedPool::Orchard)
-            .count();
-
-        let orchard_outputs = step
-            .payment_pools()
-            .values()
-            .filter(|pool| pool == &&PoolType::ORCHARD)
-            .count()
-            + step
-                .balance()
-                .proposed_change()
-                .iter()
-                .filter(|change| change.output_pool() == PoolType::ORCHARD)
-                .count();
-
-        let orchard_actions = orchard_spends.max(orchard_outputs);
-
-        if orchard_actions > orchard_actions_limit {
-            let (count, kind) = if orchard_outputs <= orchard_actions_limit {
-                (orchard_spends, "inputs")
-            } else if orchard_spends <= orchard_actions_limit {
-                (orchard_outputs, "outputs")
-            } else {
-                (orchard_actions, "actions")
-            };
-
-            return Err(LegacyCode::Misc.with_message(fl!(
-                "err-excess-orchard-actions",
-                count = count,
-                kind = kind,
-                limit = orchard_actions_limit,
-                config = "-orchardactionlimit=N",
-                bound = format!("N >= %u"),
-            )));
-        }
-    }
+    let actions_limit = APP.config().builder.limits.orchard_actions().into();
+    check_shielded_action_limits(&proposal, actions_limit).map_err(|e| {
+        LegacyCode::Misc.with_message(fl!(
+            "err-excess-shielded-actions",
+            pool = PoolType::Shielded(e.pool).to_string(),
+            count = e.count,
+            kind = e.kind,
+            limit = actions_limit,
+            config = "-orchardactionlimit=N",
+            bound = format!("N >= %u"),
+        ))
+    })?;
 
     Ok(proposal)
 }
@@ -627,7 +597,7 @@ fn step_privacy_requirement<NoteRef>(
 ///
 /// Written as a match so that adding a `ShieldedPool` variant fails compilation here,
 /// forcing the new pool to be modeled by the privacy policy rather than bypassing it.
-fn all_shielded_pools() -> [ShieldedPool; 3] {
+pub(super) fn all_shielded_pools() -> [ShieldedPool; 3] {
     match ShieldedPool::Sapling {
         ShieldedPool::Sapling | ShieldedPool::Orchard | ShieldedPool::Ironwood => [
             ShieldedPool::Sapling,

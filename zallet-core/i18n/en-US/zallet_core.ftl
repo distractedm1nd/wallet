@@ -423,8 +423,8 @@ err-ux-C = {"                    "}
 
 ## Limit errors
 
-err-excess-orchard-actions =
-    Including {$count} Orchard {$kind} would exceed the current limit of
+err-excess-shielded-actions =
+    Including {$count} {$pool} {$kind} would exceed the current limit of
     {$limit} actions, which exists to prevent memory exhaustion. Restart with
     '{$config}' where {$bound} to allow the wallet to attempt to construct this
     transaction.
