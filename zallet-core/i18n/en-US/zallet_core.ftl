@@ -43,6 +43,7 @@ flags-header = Options
 ## Command prompts & output
 
 cmd-add-rpc-user-prompt = Enter password:
+cmd-add-rpc-user-password-empty = Password must not be empty.
 cmd-add-rpc-user-instructions = Add this to your {-zallet_toml} file:
 cmd-seed-fingerprint = Seed fingerprint: {$seedfp}
 cmd-import-mnemonic-prompt = Enter mnemonic:

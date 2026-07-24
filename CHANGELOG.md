@@ -91,6 +91,8 @@ be considered breaking changes.
   responses (which can carry secrets) are no longer written to logs.
 - The `builder.limits.orchard_actions` transaction-size limit now applies to
   each shielded pool's spends and outputs, not only Orchard's.
+- Empty JSON-RPC passwords are now rejected, both by `add-rpc-user` and when
+  loading a bare `rpc.auth` password from the config.
 - `zallet rpc help` is now answered locally instead of being sent to the
   wallet's JSON-RPC server, so it no longer requires a config file, an
   initialized wallet, or a running `zallet start`. The command argument may
