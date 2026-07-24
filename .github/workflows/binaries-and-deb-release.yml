@@ -203,6 +203,7 @@ jobs:
 
       - name: Import GPG keys
         run: |
+          set -euo pipefail
           # Pipe directly from Secrets Manager to avoid writing the private key
           # to a plaintext file in the runner working directory.
           aws secretsmanager get-secret-value \
@@ -666,9 +667,7 @@ jobs:
         run: |
           set -euo pipefail
           aws secretsmanager get-secret-value --secret-id /release/gpg-signing-key \
-            --query SecretString --output text > /tmp/k.pgp
-          gpg --batch --import /tmp/k.pgp
-          shred -u /tmp/k.pgp
+            --query SecretString --output text | gpg --batch --import
       - name: Build distribution list
         run: |
           set -euo pipefail
