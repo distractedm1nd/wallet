@@ -70,6 +70,14 @@ be considered breaking changes.
   - `pczt_extract` — verify the PCZT and extract the final, network-ready
     transaction, additionally recording it in the wallet (marking its inputs
     pending-spent) when the PCZT was created by this wallet.
+- `z_sendfromaccount` RPC method: send funds from an account UUID in one shot,
+  drawing only on the funds named by an isolating `fund_source` (`"orchard"`,
+  `"sapling"`, `"any_transparent"`, or an array of transparent addresses). The
+  transaction is assembled through the same PCZT pipeline as the `pczt_*`
+  methods, and the required `privacy_policy` argument acknowledges its
+  information leakage up front. For a review-first flow, use `pczt_create`
+  (which reports the policy a transaction would require) and the other
+  `pczt_*` methods instead.
 
 ### Changed
 

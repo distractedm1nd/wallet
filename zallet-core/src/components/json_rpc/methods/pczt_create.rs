@@ -17,10 +17,12 @@ use zcash_client_backend::{
         Account, WalletRead,
         wallet::{ConfirmationsPolicy, create_pczt_from_proposal, input_selection::SpendPolicy},
     },
+    fees::StandardFeeRule,
+    proposal::Proposal,
     wallet::OvkPolicy,
     zip321::TransactionRequest,
 };
-use zcash_client_sqlite::AccountUuid;
+use zcash_client_sqlite::{AccountUuid, ReceivedNoteId};
 use zcash_keys::address::Address;
 use zcash_primitives::transaction::builder::BundlePadding;
 
@@ -147,7 +149,7 @@ pub(crate) async fn call(
     let privacy_policy = parse_privacy_policy(privacy_policy.as_deref())?;
     let confirmations_policy = confirmations_policy_for_minconf(minconf)?;
 
-    let (pczt, required_policy) = build_pczt(
+    let (pczt, required_policy, _proposal) = build_pczt(
         &mut wallet,
         &account,
         &spend_policy,
@@ -166,8 +168,9 @@ pub(crate) async fn call(
 ///
 /// Enforces `privacy_policy` and the configured Orchard action limit on the
 /// proposal, then records Zallet's signing hints and the proposal's minimum
-/// required privacy policy as proprietary fields. The required policy is
-/// returned alongside the PCZT so the caller can report it.
+/// required privacy policy as proprietary fields. The required policy and the
+/// proposal itself are returned alongside the PCZT, so the caller can report
+/// the one and verify the eventual transaction against the other.
 ///
 /// Only single-step proposals can become a PCZT, so a request that would need
 /// more than one step (a ZIP 320 TEX recipient) is rejected rather than built.
@@ -178,7 +181,11 @@ pub(super) fn build_pczt(
     request: TransactionRequest,
     privacy_policy: PrivacyPolicy,
     confirmations_policy: ConfirmationsPolicy,
-) -> RpcResult<(Pczt, PrivacyPolicy)> {
+) -> RpcResult<(
+    Pczt,
+    PrivacyPolicy,
+    Proposal<StandardFeeRule, ReceivedNoteId>,
+)> {
     let params = *wallet.params();
     let proposal = propose_and_check(
         wallet.as_mut(),
@@ -302,5 +309,5 @@ pub(super) fn build_pczt(
         .map_err(PcztError::RecordSigningHints)?
         .finish();
 
-    Ok((pczt, required_policy))
+    Ok((pczt, required_policy, proposal))
 }

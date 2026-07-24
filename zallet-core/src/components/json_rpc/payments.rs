@@ -1302,7 +1302,7 @@ pub(super) async fn verify_and_broadcast_transactions<C: Chain, FeeRuleT, NoteRe
 }
 
 /// The result of sending a payment.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, documented::Documented, JsonSchema)]
 pub(crate) struct SendResult {
     /// The ID of the resulting transaction, if the payment only produced one.
     ///

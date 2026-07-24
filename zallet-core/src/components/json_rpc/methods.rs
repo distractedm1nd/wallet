@@ -87,6 +87,8 @@ mod z_get_total_balance;
 #[cfg(zallet_build = "wallet")]
 mod z_import_address;
 #[cfg(zallet_build = "wallet")]
+mod z_send_from_account;
+#[cfg(zallet_build = "wallet")]
 mod z_send_many;
 #[cfg(zallet_build = "wallet")]
 mod z_shieldcoinbase;
@@ -729,6 +731,44 @@ pub(crate) trait WalletRpc {
         privacy_policy: Option<String>,
     ) -> z_send_many::Response;
 
+    /// Sends funds from an account in one shot, signing and broadcasting the
+    /// transaction.
+    ///
+    /// Unlike `z_sendmany`, the source of funds is an account UUID together
+    /// with an explicit fund source, rather than an address. The transaction is
+    /// assembled through the same pipeline as the `pczt_*` methods (create,
+    /// prove, sign, extract); use those methods directly to inspect a
+    /// transaction before executing it. Unlike `z_sendmany`, the call completes
+    /// synchronously, returning the txid rather than an operation id.
+    ///
+    /// # Arguments
+    /// - `account` (string, required) The UUID of the account to send the funds
+    ///   from.
+    /// - `fund_source` (string or array, required) Where funds may be drawn
+    ///   from. One of the strings `"orchard"`, `"sapling"`,
+    ///   `"any_transparent"`, or an array of transparent address strings. Each
+    ///   source is isolating: a source that cannot cover the payment reports
+    ///   insufficient funds rather than drawing on the account's other funds.
+    ///   `"orchard"` includes the Ironwood pool, where an account's
+    ///   Orchard-receiver funds are held once NU6.3 activates.
+    /// - `recipients` (array, required) An array of JSON objects representing
+    ///   the amounts to send, with the same shape as `z_sendmany`'s `amounts`.
+    /// - `minconf` (numeric, optional) Only use funds confirmed at least this
+    ///   many times.
+    /// - `privacy_policy` (string, required) Policy for what information
+    ///   leakage is acceptable, using the same values as `z_sendmany`.
+    ///   Required: the send is not proposed for review first, so the caller
+    ///   must acknowledge its privacy implications up front.
+    #[method(name = "z_sendfromaccount")]
+    async fn z_send_from_account(
+        &self,
+        account: JsonValue,
+        fund_source: JsonValue,
+        recipients: Vec<AmountParameter>,
+        minconf: Option<u32>,
+        privacy_policy: String,
+    ) -> z_send_from_account::Response;
+
     /// Shields coinbase UTXOs from a single wallet-owned source into a
     /// shielded address.
     ///
@@ -1337,6 +1377,27 @@ impl<C: Chain> WalletRpcServer for WalletRpcImpl<C> {
                 .await?,
             )
             .await)
+    }
+
+    async fn z_send_from_account(
+        &self,
+        account: JsonValue,
+        fund_source: JsonValue,
+        recipients: Vec<AmountParameter>,
+        minconf: Option<u32>,
+        privacy_policy: String,
+    ) -> z_send_from_account::Response {
+        z_send_from_account::call(
+            self.general.wallet.clone(),
+            self.keystore.clone(),
+            self.chain().await?,
+            account,
+            fund_source,
+            recipients,
+            minconf,
+            privacy_policy,
+        )
+        .await
     }
 
     async fn z_shieldcoinbase(
