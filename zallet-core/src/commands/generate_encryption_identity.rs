@@ -213,7 +213,7 @@ fn encrypt_identity(rendered: &str, passphrase: SecretString) -> Result<Zeroizin
 /// it (with confirmation).
 fn read_passphrase() -> Result<SecretString, Error> {
     if let Ok(passphrase) = std::env::var(PASSPHRASE_ENV) {
-        return Ok(SecretString::from(passphrase));
+        return validate_passphrase(SecretString::from(passphrase));
     }
 
     // Take ownership of each prompt's buffer in a `SecretString` immediately, so
@@ -234,6 +234,20 @@ fn read_passphrase() -> Result<SecretString, Error> {
             .into());
     }
 
+    validate_passphrase(passphrase)
+}
+
+/// Rejects passphrases that would not meaningfully encrypt the identity.
+///
+/// An empty passphrase produces a file that parses as passphrase-encrypted (so the
+/// keystore treats the wallet as encrypted) while being trivially decryptable.
+fn validate_passphrase(passphrase: SecretString) -> Result<SecretString, Error> {
+    if passphrase.expose_secret().is_empty() {
+        return Err(ErrorKind::Generic
+            .context(fl!("cmd-generate-encryption-identity-passphrase-empty"))
+            .into());
+    }
+
     Ok(passphrase)
 }
 
@@ -249,7 +263,7 @@ mod tests {
 
     use age::secrecy::SecretString;
 
-    use super::{encode_identity, write_identity_file};
+    use super::{encode_identity, validate_passphrase, write_identity_file};
 
     /// Decrypts a passphrase-encrypted, armored identity body, returning the
     /// recovered plaintext.
@@ -311,6 +325,12 @@ mod tests {
 
         let result = decrypt(&body, SecretString::from("the wrong passphrase".to_owned()));
         assert!(matches!(result, Err(age::DecryptError::DecryptionFailed)));
+    }
+
+    #[test]
+    fn empty_passphrase_is_rejected() {
+        assert!(validate_passphrase(SecretString::from(String::new())).is_err());
+        assert!(validate_passphrase(SecretString::from("a passphrase".to_owned())).is_ok());
     }
 
     #[test]

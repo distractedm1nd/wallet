@@ -54,6 +54,7 @@ cmd-generate-encryption-identity-exists = An encryption identity already exists 
 cmd-generate-encryption-identity-passphrase-prompt = Enter passphrase to encrypt the identity:
 cmd-generate-encryption-identity-passphrase-confirm = Confirm passphrase:
 cmd-generate-encryption-identity-passphrase-mismatch = Passphrases do not match
+cmd-generate-encryption-identity-passphrase-empty = Passphrase must not be empty; an empty passphrase would leave the identity effectively unencrypted.
 
 cmd-migrate-wallet-passphrase-prompt = Enter the passphrase for the encrypted zcashd wallet:
 cmd-migrate-wallet-passphrase-wrong = The passphrase was incorrect; please try again.
