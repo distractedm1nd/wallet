@@ -72,6 +72,28 @@ jobs:
 
           if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)(\.[0-9]+)?)?$ ]]; then
             echo "Valid version: $VERSION"
+            # Issue M mitigation: for manual dispatches, verify that the supplied
+            # tag resolves to the same commit as the dispatch ref (github.sha).
+            # This prevents building from an attacker-controlled ref while publishing
+            # artifacts under a trusted version tag.
+            if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+              TAG_SHA=$(gh api "repos/${{ github.repository }}/git/ref/tags/${VERSION}" \
+                --jq '.object.sha' 2>/dev/null || true)
+              # Peel annotated tags to their target commit
+              if [[ -n "$TAG_SHA" ]]; then
+                TAG_TYPE=$(gh api "repos/${{ github.repository }}/git/ref/tags/${VERSION}" \
+                  --jq '.object.type' 2>/dev/null || true)
+                if [[ "$TAG_TYPE" == "tag" ]]; then
+                  TAG_SHA=$(gh api "repos/${{ github.repository }}/git/tags/${TAG_SHA}" \
+                    --jq '.object.sha' 2>/dev/null || true)
+                fi
+              fi
+              if [[ "$TAG_SHA" != "$SHA" ]]; then
+                echo "::error ::Tag $VERSION resolves to $TAG_SHA but dispatch ref is $SHA. Aborting." >&2
+                exit 1
+              fi
+              echo "Tag $VERSION verified: resolves to $SHA"
+            fi
             echo "tags=latest,$VERSION,$SHA" >> "$GITHUB_OUTPUT"
             echo "should_run=true" >> "$GITHUB_OUTPUT"
           else
