@@ -24,6 +24,7 @@ use crate::components::json_rpc::server::error::LegacyCode;
 ///
 /// But these codes are different from `zcashd`, and some RPC clients rely on the exact
 /// code.
+#[derive(Clone)]
 pub struct FixRpcResponseMiddleware {
     service: RpcService,
 }
@@ -48,7 +49,8 @@ impl<'a> RpcServiceT<'a> for FixRpcResponseMiddleware {
                         .expect("response string should be valid json");
 
                 let replace_code = |old, new: ErrorObject<'_>| {
-                    debug!("Replacing RPC error: {old} with {new}");
+                    // Log only the codes; error messages can echo call parameters.
+                    debug!("Replacing RPC error code {old} with {}", new.code());
                     MethodResponse::error(result.id, new)
                 };
 
