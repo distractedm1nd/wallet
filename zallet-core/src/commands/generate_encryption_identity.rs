@@ -20,9 +20,6 @@ use crate::{
     prelude::*,
 };
 
-/// Environment variable from which the passphrase is read in non-interactive contexts.
-const PASSPHRASE_ENV: &str = "ZALLET_IDENTITY_PASSPHRASE";
-
 impl AsyncRunnable for GenerateEncryptionIdentityCmd {
     async fn run(&self) -> Result<(), Error> {
         let config = APP.config();
@@ -34,7 +31,7 @@ impl AsyncRunnable for GenerateEncryptionIdentityCmd {
         // Build the file body, either as a plain identity or passphrase-encrypted
         // (equivalent to `rage -p`).
         let passphrase = if self.passphrase {
-            Some(read_passphrase()?)
+            Some(read_passphrase(self.passphrase_file.as_deref())?)
         } else {
             None
         };
@@ -208,12 +205,11 @@ fn encrypt_identity(rendered: &str, passphrase: SecretString) -> Result<Zeroizin
 
 /// Obtains the passphrase used to encrypt the identity.
 ///
-/// In non-interactive contexts the passphrase is read from the
-/// [`PASSPHRASE_ENV`] environment variable; otherwise the user is prompted for
-/// it (with confirmation).
-fn read_passphrase() -> Result<SecretString, Error> {
-    if let Ok(passphrase) = std::env::var(PASSPHRASE_ENV) {
-        return validate_passphrase(SecretString::from(passphrase));
+/// With `passphrase_file` set, the passphrase is read from that source;
+/// otherwise the user is prompted for it (with confirmation).
+fn read_passphrase(passphrase_file: Option<&str>) -> Result<SecretString, Error> {
+    if let Some(source) = passphrase_file {
+        return validate_passphrase(read_passphrase_line(source)?);
     }
 
     // Take ownership of each prompt's buffer in a `SecretString` immediately, so
@@ -235,6 +231,46 @@ fn read_passphrase() -> Result<SecretString, Error> {
     }
 
     validate_passphrase(passphrase)
+}
+
+/// Reads the first line of the given passphrase source (`-` for standard
+/// input), without its line terminator.
+fn read_passphrase_line(source: &str) -> Result<SecretString, Error> {
+    use std::io::BufRead;
+
+    let read_failed = |e: std::io::Error| -> Error {
+        ErrorKind::Generic
+            .context(fl!(
+                "cmd-generate-encryption-identity-passphrase-file-failed",
+                path = source.to_string(),
+                error = e.to_string(),
+            ))
+            .into()
+    };
+
+    // The buffer holds the passphrase in the clear, so zeroize it on drop.
+    let mut buf = Zeroizing::new(Vec::new());
+    if source == "-" {
+        std::io::stdin()
+            .lock()
+            .read_until(b'\n', &mut buf)
+            .map_err(read_failed)?;
+    } else {
+        let file = std::fs::File::open(source).map_err(read_failed)?;
+        std::io::BufReader::new(file)
+            .read_until(b'\n', &mut buf)
+            .map_err(read_failed)?;
+    }
+
+    while matches!(buf.last(), Some(b'\n' | b'\r')) {
+        buf.pop();
+    }
+
+    Ok(SecretString::from(
+        std::str::from_utf8(&buf)
+            .map_err(|e| ErrorKind::Generic.context(e))?
+            .to_owned(),
+    ))
 }
 
 /// Rejects passphrases that would not meaningfully encrypt the identity.

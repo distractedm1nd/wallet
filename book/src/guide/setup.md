@@ -148,8 +148,9 @@ required):
   Confirm passphrase:
   Public key: age1...
   ```
-  In non-interactive contexts, the passphrase is read from the
-  `ZALLET_IDENTITY_PASSPHRASE` environment variable instead of prompting.
+  In non-interactive contexts, pass `--passphrase-file` to read the
+  passphrase from a pipe, file descriptor, or standard input (`-`) instead
+  of prompting.
 
 > [Reference](../cli/generate-encryption-identity.md)
 

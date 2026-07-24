@@ -221,11 +221,20 @@ pub(crate) struct GenerateEncryptionIdentityCmd {
 
     /// Encrypt the identity with a passphrase (ASCII-armored).
     ///
-    /// In non-interactive contexts, the passphrase is read from the
-    /// `ZALLET_IDENTITY_PASSPHRASE` environment variable; otherwise
-    /// you will be prompted for it.
+    /// You will be prompted for the passphrase (with confirmation),
+    /// unless `--passphrase-file` is given.
     #[arg(short, long)]
     pub(crate) passphrase: bool,
+
+    /// Read the passphrase from the first line of the given file instead
+    /// of prompting.
+    ///
+    /// For non-interactive use. Prefer a pipe or file descriptor (`-` for
+    /// standard input, or e.g. `/dev/fd/3`) over a regular file; never pass
+    /// secrets via command-line arguments or environment variables, which
+    /// are visible to other processes.
+    #[arg(long, requires = "passphrase", value_name = "PATH")]
+    pub(crate) passphrase_file: Option<String>,
 }
 
 /// `init-wallet-encryption` subcommand

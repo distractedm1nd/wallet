@@ -87,6 +87,10 @@ be considered breaking changes.
 
 ### Removed
 
+- The `ZALLET_IDENTITY_PASSPHRASE` environment variable is no longer read by
+  `generate-encryption-identity`; environment variables are visible to other
+  processes on many platforms. Use the new `--passphrase-file` option (`-` for
+  standard input, or a file descriptor such as `/dev/fd/3`) instead.
 - The `migrate-zcashd-wallet --buffer-wallet-transactions` flag has been removed.
   All wallet transactions are now always imported directly, so the flag no longer
   has any effect.
