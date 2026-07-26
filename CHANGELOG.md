@@ -124,6 +124,14 @@ be considered breaking changes.
   `minconf`, and `maxconf` was never applied to transparent outputs at all. An
   output of an unmined transaction is now reported only for `minconf = 0`, and
   both bounds remain inclusive.
+- The amounts/recipients objects of `z_sendmany`, `z_sendfromaccount`, and
+  `pczt_create` now reject unknown keys, as `zcashd` does. Previously a stray
+  key was silently ignored, so a misspelled `memo` field sent the payment
+  without its memo.
+- Async RPC operations whose task panics are now marked as failed, with the
+  panic message reported via `z_getoperationstatus` and `z_getoperationresult`.
+  Previously such operations remained in the `executing` state forever and
+  could not be pruned.
 - `z_getbalances` now reports the documented transparent balance split:
   `regular` contains only non-coinbase funds and `coinbase` is populated with
   coinbase funds (immature coinbase is reported as `pending` rather than

@@ -45,7 +45,11 @@ use super::{
     utils::{ZCASH_LEGACY_ACCOUNT, zatoshis_from_value},
 };
 
+// `deny_unknown_fields` matches `zcashd`, which rejects unknown keys in the
+// amounts objects. Silently ignoring them is dangerous for a payment API: a
+// misspelled `memo` key would send the payment without its memo.
 #[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct AmountParameter {
     /// A taddr, zaddr, or Unified Address.
     address: String,
@@ -844,6 +848,34 @@ pub(super) fn parse_memo(memo_hex: &str) -> RpcResult<MemoBytes> {
         LegacyCode::InvalidParameter
             .with_static("Invalid parameter, memo is longer than the maximum allowed 512 bytes.")
     })
+}
+
+#[cfg(test)]
+mod amount_parameter_tests {
+    use super::AmountParameter;
+
+    #[test]
+    fn accepts_the_known_keys() {
+        for json in [
+            r#"{"address": "taddr", "amount": 1}"#,
+            r#"{"address": "zaddr", "amount": "0.5", "memo": "00"}"#,
+        ] {
+            serde_json::from_str::<AmountParameter>(json).expect("known keys parse");
+        }
+    }
+
+    /// An unknown key must be rejected, as in `zcashd`: silently ignoring one
+    /// means a misspelled `memo` sends the payment without its memo.
+    #[test]
+    fn rejects_an_unknown_key() {
+        let err = match serde_json::from_str::<AmountParameter>(
+            r#"{"address": "zaddr", "amount": 1, "memmo": "00"}"#,
+        ) {
+            Ok(_) => panic!("unknown key should be rejected"),
+            Err(e) => e,
+        };
+        assert!(err.to_string().contains("memmo"), "{err}");
+    }
 }
 
 #[cfg(test)]
