@@ -646,6 +646,41 @@ pub(super) fn enforce_privacy_policy<FeeRuleT, NoteRef>(
     Ok(())
 }
 
+/// Returns the privacy policy required to execute the given proposal.
+///
+/// This is the inverse of [`enforce_privacy_policy`]: rather than checking a caller-supplied
+/// policy against the information a proposal would leak, it computes the strictest
+/// [`PrivacyPolicy`] that still permits the proposal. Any policy that
+/// [`PrivacyPolicy::is_compatible_with`] the returned value is sufficient to execute the
+/// transaction; the returned value is itself the strictest such policy.
+///
+/// Both directions read the same per-step classification from
+/// [`step_privacy_requirement`], so `enforce_privacy_policy(proposal, p)` succeeds exactly
+/// when `p.is_compatible_with(required_privacy_policy(proposal))`.
+///
+/// This reports the privacy implications of a proposed transaction without requiring the
+/// caller to commit to a policy up front.
+pub(super) fn required_privacy_policy<FeeRuleT, NoteRef>(
+    proposal: &Proposal<FeeRuleT, NoteRef>,
+) -> PrivacyPolicy {
+    // The required policy for the whole proposal is the meet (greatest lower bound, i.e.
+    // most-permissive-needed) of the policies required by each step. We start from
+    // `FullPrivacy` (the strictest policy, the lattice top); `meet` with each step's
+    // requirement relaxes it exactly as much as that step's leakage demands. A step that
+    // reveals nothing has no requirement, and leaves the running policy alone.
+    proposal
+        .steps()
+        .iter()
+        .fold(PrivacyPolicy::FullPrivacy, |required, step| {
+            required.meet(
+                step_privacy_requirement(step)
+                    .map_or(PrivacyPolicy::FullPrivacy, |(step_required, _)| {
+                        step_required
+                    }),
+            )
+        })
+}
+
 /// Parses the optional `privacy_policy` JSON-RPC argument into a [`PrivacyPolicy`],
 /// defaulting to [`PrivacyPolicy::FullPrivacy`] when absent and rejecting the unsupported
 /// `"LegacyCompat"` policy.

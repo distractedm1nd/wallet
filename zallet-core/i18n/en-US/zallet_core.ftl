@@ -209,6 +209,94 @@ err-transparent-payment-missing =
     The built transaction is missing a requested payment output (to {$address}). The wallet
     database is corrupted or has been tampered with. The transaction has not been broadcast.
 
+## PCZT errors
+
+# In each of these, {$error} is the failure reported by the `pczt` crate. It is
+# diagnostic text from a dependency and is not itself translated.
+err-pczt-parse = Invalid PCZT: {$error}
+err-pczt-serialize = Failed to serialize PCZT: {$error}
+err-pczt-combine = Failed to combine PCZTs: {$error}
+err-pczt-prove-sapling = Failed to create Sapling proofs: {$error}
+err-pczt-prove-orchard = Failed to create Orchard proof: {$error}
+err-pczt-finalize-spends = Failed to finalize PCZT spends: {$error}
+err-pczt-extract = Failed to extract transaction: {$error}
+err-pczt-signer-init = Failed to initialize signer: {$error}
+err-pczt-record-signing-hints = Failed to record transparent signing hints: {$error}
+# {$task} is the name of the blocking task that panicked or was cancelled, such
+# as `pczt_prove`; it is an internal identifier and is not translated.
+err-pczt-task-failed = The {$task} task failed: {$error}
+
+## PCZT request errors
+
+err-pczt-combine-none-given = At least one PCZT is required
+err-pczt-combine-too-many =
+    Too many PCZTs to combine: {$given} exceeds maximum of {$maximum}
+# Identifies which PCZT in the submitted array failed to decode. {$index} is its
+# zero-based position and {$error} is the decoding failure.
+err-pczt-combine-indexed = PCZT {$index}: {$error}
+err-pczt-too-large = PCZT exceeds maximum size limit
+err-pczt-invalid-base64 = Invalid base64 encoding: {$error}
+err-pczt-too-many-recipients =
+    Too many recipients: {$given} exceeds maximum of {$maximum}
+err-pczt-create-failed = Failed to create PCZT: {$error}
+err-pczt-transparent-metadata-lookup =
+    Failed to look up transparent address metadata: {$error}
+err-pczt-transparent-input-count-mismatch =
+    Internal error: transparent input count mismatch
+err-pczt-serialize-transaction = Failed to serialize transaction: {$error}
+err-pczt-prove-ironwood = Failed to create Ironwood proof: {$error}
+err-pczt-extract-store = Failed to extract and store transaction: {$error}
+err-pczt-stored-transaction-missing =
+    The extracted transaction was stored but could not be read back
+err-pczt-from-invalid =
+    Invalid from parameter: expected an address or an account UUID.
+err-pczt-fund-source-requires-account =
+    fund_source may only be given when `from` is an account UUID.
+# {$address} is the TEX address the caller asked to pay; it is not translated.
+# “z_sendmany” is an RPC method name, so it is not translated either.
+err-pczt-tex-recipient =
+    Cannot pay the TEX address {$address}: paying a TEX address takes two
+    transactions, and a PCZT holds only one. Use z_sendmany instead.
+err-pczt-multi-step-proposal =
+    This payment requires more than one transaction, which a PCZT cannot
+    represent. Use z_sendmany instead.
+
+## fund_source errors
+
+# “orchard”, “sapling” and “any_transparent” are the literal values the
+# parameter accepts, so they are not translated. {$given} is what the caller
+# supplied instead.
+err-fund-source-unknown =
+    Invalid fund_source: expected "orchard", "sapling", "any_transparent", or
+    an array of transparent addresses, got "{$given}".
+err-fund-source-empty-array =
+    Invalid fund_source: the array of transparent addresses is empty.
+err-fund-source-non-string-entry =
+    Invalid fund_source: array entries must be transparent address strings.
+# {$address} is the address the caller supplied; it is not translated.
+err-fund-source-not-transparent =
+    Invalid fund_source: "{$address}" is not a transparent address.
+err-fund-source-not-a-source =
+    Invalid fund_source: expected a string or an array of transparent addresses.
+
+## PCZT signing errors
+
+err-pczt-invalid-seed-fingerprint = Invalid seed fingerprint: expected 32 bytes
+err-pczt-invalid-account-index = Invalid account index: expected 4 bytes
+err-pczt-account-index-out-of-range =
+    Invalid account index: {$index} is out of range
+err-pczt-derive-spending-key = Failed to derive spending key: {$error}
+err-pczt-strict-unsigned =
+    Strict mode: {$transparent} transparent, {$sapling} sapling, {$orchard}
+    orchard, {$ironwood} ironwood inputs remain unsigned
+# {$required} and {$acknowledged} are privacy-policy names such as
+# `AllowRevealedAmounts`; they are not translated.
+err-pczt-policy-not-acknowledged =
+    This transaction requires the privacy policy {$required}, which the
+    supplied policy {$acknowledged} does not acknowledge.
+err-pczt-invalid-recorded-policy =
+    The privacy policy recorded in the PCZT is unrecognized.
+
 ## Transaction proposal errors
 
 err-propose-transaction-failed = Failed to propose transaction: {$error}
