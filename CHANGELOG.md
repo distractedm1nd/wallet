@@ -42,6 +42,12 @@ be considered breaking changes.
 
 ### Fixed
 
+- `z_listunspent` now applies both confirmation bounds to every pool. Shielded
+  notes whose transaction is not mined in the main chain (which can occur when a
+  reorg un-mines a previously scanned transaction) were reported at every
+  `minconf`, and `maxconf` was never applied to transparent outputs at all. An
+  output of an unmined transaction is now reported only for `minconf = 0`, and
+  both bounds remain inclusive.
 - Async RPC operations whose task panics are now marked as failed, with the
   panic message reported via `z_getoperationstatus` and `z_getoperationresult`.
   Previously such operations remained in the `executing` state forever and
