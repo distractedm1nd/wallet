@@ -15,12 +15,16 @@ use zcash_client_backend::{
         SAPLING_SHARD_HEIGHT, TargetValue, TransparentKeyOrigin, WalletCommitmentTrees, WalletRead,
         WalletWrite, Zip32Derivation,
         chain::ChainState,
-        error::{FindAccountForAddressError, RewindError},
-        wallet::{ConfirmationsPolicy, TargetHeight},
+        error::{FindAccountForAddressError, LockError, RewindError},
+        scanning::ScanPriority,
+        wallet::{ConfirmationsPolicy, TargetHeight, input_selection::LockFilter},
     },
     fees::StandardFeeRule,
     keys::{UnifiedAddressRequest, UnifiedFullViewingKey, UnifiedSpendingKey},
-    wallet::{Note, ReceivedNote, TransparentAddressMetadata, WalletTransparentOutput},
+    wallet::{
+        LockOwner, Note, OutputRef, ReceivedNote, TransparentAddressMetadata,
+        WalletTransparentOutput,
+    },
 };
 use zcash_client_sqlite::{WalletDb, util::SystemClock};
 use zcash_primitives::{block::BlockHash, transaction::Transaction};
@@ -258,6 +262,10 @@ impl WalletRead for DbConnection {
         self.with(|db_data| db_data.get_wallet_birthday())
     }
 
+    fn get_wallet_recover_until(&self) -> Result<Option<BlockHeight>, Self::Error> {
+        self.with(|db_data| db_data.get_wallet_recover_until())
+    }
+
     fn get_wallet_summary(
         &self,
         confirmations_policy: ConfirmationsPolicy,
@@ -441,8 +449,11 @@ impl InputSource for DbConnection {
         protocol: ShieldedPool,
         index: u32,
         target_height: TargetHeight,
+        lock_filter: LockFilter<'_>,
     ) -> Result<Option<ReceivedNote<Self::NoteRef, Note>>, Self::Error> {
-        self.with(|db_data| db_data.get_spendable_note(txid, protocol, index, target_height))
+        self.with(|db_data| {
+            db_data.get_spendable_note(txid, protocol, index, target_height, lock_filter)
+        })
     }
 
     fn select_spendable_notes(
@@ -453,6 +464,7 @@ impl InputSource for DbConnection {
         target_height: TargetHeight,
         confirmations_policy: ConfirmationsPolicy,
         exclude: &[Self::NoteRef],
+        lock_filter: LockFilter<'_>,
     ) -> Result<ReceivedNotes<Self::NoteRef>, Self::Error> {
         self.with(|db_data| {
             db_data.select_spendable_notes(
@@ -462,6 +474,7 @@ impl InputSource for DbConnection {
                 target_height,
                 confirmations_policy,
                 exclude,
+                lock_filter,
             )
         })
     }
@@ -472,8 +485,11 @@ impl InputSource for DbConnection {
         sources: &[ShieldedPool],
         target_height: TargetHeight,
         exclude: &[Self::NoteRef],
+        lock_filter: LockFilter<'_>,
     ) -> Result<ReceivedNotes<Self::NoteRef>, Self::Error> {
-        self.with(|db_data| db_data.select_unspent_notes(account, sources, target_height, exclude))
+        self.with(|db_data| {
+            db_data.select_unspent_notes(account, sources, target_height, exclude, lock_filter)
+        })
     }
 
     fn get_unspent_transparent_output(
@@ -490,6 +506,7 @@ impl InputSource for DbConnection {
         target_height: TargetHeight,
         confirmations_policy: ConfirmationsPolicy,
         output_filter: CoinbaseFilter,
+        lock_filter: LockFilter<'_>,
     ) -> Result<Vec<WalletTransparentOutput<Self::AccountId>>, Self::Error> {
         self.with(|db_data| {
             db_data.get_spendable_transparent_outputs(
@@ -497,6 +514,7 @@ impl InputSource for DbConnection {
                 target_height,
                 confirmations_policy,
                 output_filter,
+                lock_filter,
             )
         })
     }
@@ -512,6 +530,7 @@ impl InputSource for DbConnection {
         target_value: TargetValue,
         max_inputs: usize,
         fee_rule: &StandardFeeRule,
+        lock_filter: LockFilter<'_>,
     ) -> Result<Vec<WalletTransparentOutput<Self::AccountId>>, Self::Error> {
         self.with(|db_data| {
             db_data.select_spendable_transparent_outputs(
@@ -523,6 +542,7 @@ impl InputSource for DbConnection {
                 target_value,
                 max_inputs,
                 fee_rule,
+                lock_filter,
             )
         })
     }
@@ -533,8 +553,11 @@ impl InputSource for DbConnection {
         selector: &NoteFilter,
         target_height: TargetHeight,
         exclude: &[Self::NoteRef],
+        lock_filter: LockFilter<'_>,
     ) -> Result<AccountMeta, Self::Error> {
-        self.with(|db_data| db_data.get_account_metadata(account, selector, target_height, exclude))
+        self.with(|db_data| {
+            db_data.get_account_metadata(account, selector, target_height, exclude, lock_filter)
+        })
     }
 }
 
@@ -631,6 +654,31 @@ impl WalletWrite for DbConnection {
         blocks: Vec<zcash_client_backend::data_api::ScannedBlock<Self::AccountId>>,
     ) -> Result<(), Self::Error> {
         self.with_mut(|mut db_data| db_data.put_blocks(from_state, blocks))
+    }
+
+    fn prune_scan_queue_below(
+        &mut self,
+        height: BlockHeight,
+        retain_with_priority: Option<ScanPriority>,
+    ) -> Result<u64, Self::Error> {
+        self.with_mut(|mut db_data| db_data.prune_scan_queue_below(height, retain_with_priority))
+    }
+
+    fn lock_outputs(
+        &mut self,
+        outputs: &[OutputRef],
+        owner: LockOwner,
+        lock_expiry_height: BlockHeight,
+    ) -> Result<usize, LockError<Self::Error>> {
+        self.with_mut(|mut db_data| db_data.lock_outputs(outputs, owner, lock_expiry_height))
+    }
+
+    fn unlock_output(&mut self, output: &OutputRef, owner: LockOwner) -> Result<bool, Self::Error> {
+        self.with_mut(|mut db_data| db_data.unlock_output(output, owner))
+    }
+
+    fn clear_locked_outputs(&mut self, account: Self::AccountId) -> Result<usize, Self::Error> {
+        self.with_mut(|mut db_data| db_data.clear_locked_outputs(account))
     }
 
     fn put_received_transparent_utxo(
@@ -765,6 +813,13 @@ impl WalletCommitmentTrees for DbConnection {
         self.with_mut(|mut db_data| db_data.put_sapling_subtree_roots(start_index, roots))
     }
 
+    fn get_sapling_subtree_root(
+        &mut self,
+        index: u64,
+    ) -> Result<Option<sapling::Node>, ShardTreeError<Self::Error>> {
+        self.with_mut(|mut db_data| db_data.get_sapling_subtree_root(index))
+    }
+
     type OrchardShardStore<'a> =
         <WalletDb<rusqlite::Connection, Network, SystemClock, OsRng> as WalletCommitmentTrees>::OrchardShardStore<'a>;
 
@@ -792,11 +847,19 @@ impl WalletCommitmentTrees for DbConnection {
         self.with_mut(|mut db_data| db_data.put_orchard_subtree_roots(start_index, roots))
     }
 
+    fn get_orchard_subtree_root(
+        &mut self,
+        index: u64,
+    ) -> Result<Option<orchard::tree::MerkleHashOrchard>, ShardTreeError<Self::Error>> {
+        self.with_mut(|mut db_data| db_data.get_orchard_subtree_root(index))
+    }
+
     // Ironwood shares the Orchard note commitment tree's shape (same shard store and depths),
-    // so these mirror the Orchard methods; `with_ironwood_tree_mut` returns `Option` because a
-    // backend may not track an Ironwood tree, but `WalletDb` does, so we forward to it rather
-    // than fall back to the trait's no-op default (which would silently drop Ironwood tree
-    // updates made through this connection).
+    // so these mirror the Orchard methods; `with_ironwood_tree_mut`, `put_ironwood_subtree_roots`
+    // and `get_ironwood_subtree_root` all default to reporting that no Ironwood tree exists,
+    // because a backend may not track one. `WalletDb` does, so we forward to it rather than fall
+    // back to those defaults (which would silently drop Ironwood tree updates made through this
+    // connection, and hide its recorded subtree roots).
     fn with_ironwood_tree_mut<F, A, E>(&mut self, callback: F) -> Result<Option<A>, E>
     where
         for<'a> F: FnMut(
@@ -819,5 +882,12 @@ impl WalletCommitmentTrees for DbConnection {
         >],
     ) -> Result<(), ShardTreeError<Self::Error>> {
         self.with_mut(|mut db_data| db_data.put_ironwood_subtree_roots(start_index, roots))
+    }
+
+    fn get_ironwood_subtree_root(
+        &mut self,
+        index: u64,
+    ) -> Result<Option<orchard::tree::MerkleHashOrchard>, ShardTreeError<Self::Error>> {
+        self.with_mut(|mut db_data| db_data.get_ironwood_subtree_root(index))
     }
 }

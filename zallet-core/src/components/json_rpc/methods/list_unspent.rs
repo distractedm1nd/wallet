@@ -13,7 +13,7 @@ use zcash_client_backend::{
     address::UnifiedAddress,
     data_api::{
         Account, AccountPurpose, CoinbaseFilter, InputSource, WalletRead,
-        wallet::{ConfirmationsPolicy, TargetHeight},
+        wallet::{ConfirmationsPolicy, TargetHeight, input_selection::LockFilter},
     },
     encoding::AddressCodec,
     fees::{orchard::InputView as _, sapling::InputView as _},
@@ -237,6 +237,10 @@ pub(crate) fn call(
                             target_height,
                             confirmations_policy,
                             coinbase_filter,
+                            // A locked output is still an unspent output belonging to the
+                            // wallet, and this RPC reports the wallet's holdings rather than
+                            // selecting inputs, so lock state is not a filter here.
+                            LockFilter::Unfiltered,
                         )
                         .map_err(|e| {
                             RpcError::owned(
@@ -296,6 +300,7 @@ pub(crate) fn call(
                 ],
                 target_height,
                 &[],
+                LockFilter::Unfiltered,
             )
             .map_err(|e| {
                 RpcError::owned(

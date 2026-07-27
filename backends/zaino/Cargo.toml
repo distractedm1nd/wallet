@@ -30,17 +30,17 @@ orchard = "0.15.0"
 sapling = { package = "sapling-crypto", version = "0.7" }
 jsonrpsee = "0.24"
 tokio = { version = "1", features = ["net", "rt-multi-thread"] }
-transparent = { package = "zcash_transparent", version = "0.9.0" }
-zaino-common = "0.2"
-zaino-fetch = "0.2.1"
-zaino-state = "0.3.1"
-zcash_client_backend = "0.24.0-rc.1"
-zcash_keys = { version = "0.15.0", features = ["unstable"] }
-zcash_primitives = "0.29.0"
+transparent = { package = "zcash_transparent", version = "0.10.0" }
+zaino-common = "0.4"
+zaino-fetch = "0.4"
+zaino-state = "0.5"
+zcash_client_backend = "0.24.0-rc.4"
+zcash_keys = { version = "0.16.0", features = ["unstable"] }
+zcash_primitives = "0.30.0"
 zcash_protocol = "0.10.0"
-zebra-chain = "11"
-zebra-rpc = "11"
-zebra-state = "10"
+zebra-chain = "11.3"
+zebra-rpc = "15.0"
+zebra-state = "12.0.1"
 
 [features]
 default = []
@@ -72,27 +72,17 @@ once_cell = "1.2"
 tempfile = "3"
 
 [patch.crates-io]
-# Replace with the crates.io releases once they ship.
-equihash = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-f4jumble = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-zcash_address = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-zcash_client_backend = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-zcash_client_sqlite = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-zcash_encoding = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-zcash_keys = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-zcash_primitives = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-zcash_proofs = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-zcash_protocol = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-zcash_transparent = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-zip321 = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-
-# TEMPORARY: pin the zaino crates to zingolabs/zaino `dev` (currently 8048bf8d),
-# which surfaces the Ironwood (NU6.3) note commitment treestate from
-# `get_treestate` (now a `(sapling, orchard, ironwood)` triple of
-# `PoolTreestate`). Reading the real Ironwood frontier is required for Ironwood
-# notes to be spendable; an empty frontier conflicts with the wallet's advancing
-# tree and sync fails with `CheckpointConflict`. Repoint at upstream zaino once
-# the NU6.3 work lands in a release.
-zaino-common = { git = "https://github.com/zingolabs/zaino.git", rev = "8048bf8df61cd409af8c22518a16514bee02a0fb" }
-zaino-fetch = { git = "https://github.com/zingolabs/zaino.git", rev = "8048bf8df61cd409af8c22518a16514bee02a0fb" }
-zaino-state = { git = "https://github.com/zingolabs/zaino.git", rev = "8048bf8df61cd409af8c22518a16514bee02a0fb" }
+# TEMPORARY: pin the zaino crates to the zodl-inc/zaino branch
+# `update/librustzcash-0.24.0-rc.4`, which bumps zaino to the librustzcash
+# 0.30/0.10 cohort matching this workspace and surfaces the Ironwood (NU6.3)
+# note commitment treestate from `get_treestate` (now a `(sapling, orchard,
+# ironwood)` triple of `PoolTreestate`). Reading the real Ironwood frontier is
+# required for Ironwood notes to be spendable; an empty frontier conflicts with
+# the wallet's advancing tree and sync fails with `CheckpointConflict`. This is
+# zingolabs/zaino#1428; repoint at upstream zaino once it (and the NU6.3 work)
+# lands in a release. The zebra crates are consumed from crates.io at the
+# librustzcash 0.30/0.10 versions (chain 11.3 / state 12.0.1 / rpc 15.0), so no
+# zebra [patch] is needed.
+zaino-common = { git = "https://github.com/zodl-inc/zaino.git", rev = "d2d06bdd" }
+zaino-fetch = { git = "https://github.com/zodl-inc/zaino.git", rev = "d2d06bdd" }
+zaino-state = { git = "https://github.com/zodl-inc/zaino.git", rev = "d2d06bdd" }

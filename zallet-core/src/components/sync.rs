@@ -48,7 +48,7 @@ use tokio::{sync::Notify, time};
 #[cfg(not(feature = "spend-index"))]
 use zcash_client_backend::data_api::{
     CoinbaseFilter, InputSource, TransactionsInvolvingAddress,
-    wallet::{ConfirmationsPolicy, TargetHeight},
+    wallet::{ConfirmationsPolicy, TargetHeight, input_selection::LockFilter},
 };
 use zcash_client_backend::{
     data_api::{
@@ -858,6 +858,10 @@ async fn service_address_request<V: ChainView>(
         TargetHeight::from(view_tip + 1),
         ConfirmationsPolicy::MIN,
         CoinbaseFilter::AllTransparentOutputs,
+        // This is spend detection, not input selection: we need every tracked output
+        // regardless of lock state to compare against the chain's unspent set, so a
+        // locked output is not mistaken for a spent one.
+        LockFilter::Unfiltered,
     )?;
     let any_spent = our_outputs.iter().any(|output| {
         let outpoint = output.outpoint();

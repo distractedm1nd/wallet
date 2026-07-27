@@ -29,6 +29,20 @@ user-id = 3788
 user-login = "emilio"
 user-name = "Emilio Cobos Álvarez"
 
+[[publisher.equihash]]
+version = "0.3.0"
+when = "2026-04-24"
+user-id = 169181
+user-login = "nuttycom"
+user-name = "Kris Nuttycombe"
+
+[[publisher.f4jumble]]
+version = "0.1.1"
+when = "2024-12-13"
+user-id = 6289
+user-login = "str4d"
+user-name = "Jack Grigg"
+
 [[publisher.halo2_gadgets]]
 version = "0.5.0"
 when = "2026-06-03"
@@ -58,8 +72,15 @@ user-login = "nuttycom"
 user-name = "Kris Nuttycombe"
 
 [[publisher.orchard]]
-version = "0.15.0"
-when = "2026-07-09"
+version = "0.15.3"
+when = "2026-07-22"
+user-id = 1244
+user-login = "ebfull"
+user-name = "Sean Bowe"
+
+[[publisher.pczt]]
+version = "0.9.1"
+when = "2026-07-27"
 user-id = 169181
 user-login = "nuttycom"
 user-name = "Kris Nuttycombe"
@@ -77,6 +98,20 @@ when = "2025-10-26"
 user-id = 6289
 user-login = "str4d"
 user-name = "Jack Grigg"
+
+[[publisher.tower-batch-control]]
+version = "1.1.1"
+when = "2026-07-17"
+user-id = 235397
+user-login = "upbqdn"
+user-name = "Marek"
+
+[[publisher.tower-fallback]]
+version = "0.2.43"
+when = "2026-07-17"
+user-id = 235397
+user-login = "upbqdn"
+user-name = "Marek"
 
 [[publisher.unicode-normalization]]
 version = "0.1.25"
@@ -321,6 +356,34 @@ user-id = 169181
 user-login = "nuttycom"
 user-name = "Kris Nuttycombe"
 
+[[publisher.zcash_address]]
+version = "0.13.0"
+when = "2026-07-09"
+user-id = 169181
+user-login = "nuttycom"
+user-name = "Kris Nuttycombe"
+
+[[publisher.zcash_client_backend]]
+version = "0.24.0-rc.4"
+when = "2026-07-27"
+user-id = 169181
+user-login = "nuttycom"
+user-name = "Kris Nuttycombe"
+
+[[publisher.zcash_client_sqlite]]
+version = "0.22.0-rc.4"
+when = "2026-07-27"
+user-id = 169181
+user-login = "nuttycom"
+user-name = "Kris Nuttycombe"
+
+[[publisher.zcash_encoding]]
+version = "0.4.0"
+when = "2026-04-24"
+user-id = 169181
+user-login = "nuttycom"
+user-name = "Kris Nuttycombe"
+
 [[publisher.zcash_history]]
 version = "0.5.0"
 when = "2026-07-09"
@@ -335,6 +398,20 @@ user-id = 169181
 user-login = "nuttycom"
 user-name = "Kris Nuttycombe"
 
+[[publisher.zcash_keys]]
+version = "0.16.0"
+when = "2026-07-25"
+user-id = 169181
+user-login = "nuttycom"
+user-name = "Kris Nuttycombe"
+
+[[publisher.zcash_pool_migration]]
+version = "0.1.0-rc.3"
+when = "2026-07-27"
+user-id = 169181
+user-login = "nuttycom"
+user-name = "Kris Nuttycombe"
+
 [[publisher.zcash_primitives]]
 version = "0.28.0"
 when = "2026-06-03"
@@ -342,9 +419,30 @@ user-id = 169181
 user-login = "nuttycom"
 user-name = "Kris Nuttycombe"
 
+[[publisher.zcash_primitives]]
+version = "0.30.0"
+when = "2026-07-24"
+user-id = 169181
+user-login = "nuttycom"
+user-name = "Kris Nuttycombe"
+
+[[publisher.zcash_proofs]]
+version = "0.30.0"
+when = "2026-07-24"
+user-id = 169181
+user-login = "nuttycom"
+user-name = "Kris Nuttycombe"
+
 [[publisher.zcash_protocol]]
 version = "0.9.0"
 when = "2026-06-03"
+user-id = 169181
+user-login = "nuttycom"
+user-name = "Kris Nuttycombe"
+
+[[publisher.zcash_protocol]]
+version = "0.10.1"
+when = "2026-07-24"
 user-id = 169181
 user-login = "nuttycom"
 user-name = "Kris Nuttycombe"
@@ -359,6 +457,13 @@ user-name = "Daira-Emma Hopwood"
 [[publisher.zcash_transparent]]
 version = "0.8.0"
 when = "2026-06-03"
+user-id = 169181
+user-login = "nuttycom"
+user-name = "Kris Nuttycombe"
+
+[[publisher.zcash_transparent]]
+version = "0.10.0"
+when = "2026-07-24"
 user-id = 169181
 user-login = "nuttycom"
 user-name = "Kris Nuttycombe"
@@ -383,6 +488,13 @@ when = "2025-09-17"
 user-id = 6289
 user-login = "str4d"
 user-name = "Jack Grigg"
+
+[[publisher.zip321]]
+version = "0.9.0-rc.1"
+when = "2026-07-12"
+user-id = 169181
+user-login = "nuttycom"
+user-name = "Kris Nuttycombe"
 
 [[audits.bytecode-alliance.wildcard-audits.bumpalo]]
 who = "Nick Fitzgerald <fitzgen@gmail.com>"
@@ -1595,6 +1707,12 @@ aggregated-from = "https://chromium.googlesource.com/chromium/src/+/main/third_p
 who = "George Burgess IV <gbiv@google.com>"
 criteria = "safe-to-deploy"
 version = "0.1.0"
+aggregated-from = "https://chromium.googlesource.com/chromiumos/third_party/rust_crates/+/refs/heads/main/cargo-vet/audits.toml?format=TEXT"
+
+[[audits.google.audits.version_check]]
+who = "George Burgess IV <gbiv@google.com>"
+criteria = "safe-to-deploy"
+version = "0.9.4"
 aggregated-from = "https://chromium.googlesource.com/chromiumos/third_party/rust_crates/+/refs/heads/main/cargo-vet/audits.toml?format=TEXT"
 
 [[audits.isrg.audits.base64]]
@@ -3445,3 +3563,18 @@ criteria = "safe-to-deploy"
 version = "0.4.1"
 notes = "Additive-only change that exposes the ability to decrypt by pk_d and esk. No functional changes."
 aggregated-from = "https://raw.githubusercontent.com/zcash/librustzcash/main/supply-chain/audits.toml"
+
+[[audits.zebra.audits.nix]]
+who = "Alfredo Garcia <oxarbitrage@gmail.com>"
+criteria = "safe-to-deploy"
+version = "0.15.0"
+
+[[audits.zebra.audits.uint]]
+who = "Alfredo Garcia <oxarbitrage@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "0.9.5 -> 0.10.0"
+
+[[audits.zebra.audits.version_check]]
+who = "Alfredo Garcia <oxarbitrage@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "0.9.4 -> 0.9.5"
