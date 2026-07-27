@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt};
+use std::{collections::HashSet, convert::Infallible, fmt, num::NonZeroU32};
 
 use abscissa_core::Application;
 use jsonrpsee::core::JsonValue;
@@ -6,16 +6,31 @@ use jsonrpsee::{core::RpcResult, types::ErrorObjectOwned};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use transparent::{address::TransparentAddress, keys::AccountPubKey};
-use zcash_address::ZcashAddress;
+use zcash_address::{ZcashAddress, unified};
 use zcash_client_backend::{
-    data_api::{Account as _, WalletRead},
-    proposal::Proposal,
+    data_api::{
+        Account as _, WalletRead,
+        wallet::{
+            ConfirmationsPolicy,
+            input_selection::{GreedyInputSelector, SpendPolicy, TransparentSpendPolicy},
+            propose_transfer,
+        },
+    },
+    fees::{
+        DustOutputPolicy, StandardFeeRule, TransparentChangePolicy,
+        standard::MultiOutputChangeStrategy,
+    },
+    proposal::{Proposal, Step},
     wallet::TransparentAddressSource,
     zip321::{Payment, TransactionRequest},
 };
-use zcash_client_sqlite::{AccountUuid, wallet::Account};
+use zcash_client_sqlite::{AccountUuid, ReceivedNoteId, wallet::Account};
 use zcash_keys::{address::Address, keys::UnifiedFullViewingKey};
-use zcash_protocol::{PoolType, TxId, memo::MemoBytes, value::Zatoshis};
+use zcash_protocol::{
+    PoolType, ShieldedPool, TxId,
+    memo::MemoBytes,
+    value::{MAX_MONEY, Zatoshis},
+};
 use zip32::{AccountId, fingerprint::SeedFingerprint};
 
 use crate::{
@@ -112,6 +127,259 @@ pub(super) fn build_request(amounts: &[AmountParameter]) -> RpcResult<Transactio
         // TODO: Map errors to `zcashd` shape.
         LegacyCode::InvalidParameter.with_message(format!("Invalid payment request: {e}"))
     })
+}
+
+/// Maps the optional `minconf` JSON-RPC argument onto a [`ConfirmationsPolicy`],
+/// falling back to the wallet's configured policy when absent.
+///
+/// `minconf = 0` permits spending unconfirmed (trusted) funds; any other value
+/// requires that many confirmations for trusted and untrusted TXOs alike.
+pub(super) fn confirmations_policy_for_minconf(
+    minconf: Option<u32>,
+) -> RpcResult<ConfirmationsPolicy> {
+    match minconf {
+        Some(minconf) => Ok(NonZeroU32::new(minconf).map_or(
+            ConfirmationsPolicy::new_symmetrical(NonZeroU32::MIN, true),
+            |c| ConfirmationsPolicy::new_symmetrical(c, false),
+        )),
+        None => {
+            APP.config().builder.confirmations_policy().map_err(|_| {
+                LegacyCode::Wallet.with_message(fl!("err-confirmations-policy-invalid"))
+            })
+        }
+    }
+}
+
+/// The sources of funds a transfer from `source` may draw upon.
+///
+/// Spending from a bare transparent address draws only on that address's UTXOs: the funds are
+/// already public, and confining selection to the named address avoids linking it to the
+/// account's other transparent receivers. Every other source stays shielded-only, so a
+/// shielded send can never silently reach into transparent funds.
+///
+/// Coinbase UTXOs are excluded: `TransparentSpendPolicy` defaults to
+/// `CoinbasePolicy::NonCoinbase`, and consensus requires coinbase to be spent to a single
+/// shielded output, which is `z_shieldcoinbase`'s job.
+///
+/// The privacy policy deliberately does not narrow this: the selector returns its best
+/// proposal, and [`enforce_privacy_policy`] rejects it afterwards if it leaks more than the
+/// caller permitted.
+pub(super) fn spend_policy_for(source: &Address) -> SpendPolicy {
+    match source {
+        Address::Transparent(taddr) => SpendPolicy::shielded_pools([])
+            .with_transparent(TransparentSpendPolicy::from_one_address(*taddr)),
+        _ => SpendPolicy::default(),
+    }
+}
+
+/// Whether change may be returned to the transparent pool.
+///
+/// Permitted exactly when `spend_policy` can spend transparent funds in the first place, which
+/// keeps a fully transparent send transparent end to end rather than sweeping its change into a
+/// shielded pool. A shielded send therefore cannot acquire a transparent change output by this
+/// route.
+///
+/// The change strategy independently enforces the same thing (it emits transparent change only
+/// when the transaction's net flows are fully transparent, i.e. it has no shielded input or
+/// output at all), but that is its invariant, not ours.
+pub(super) fn transparent_change_policy_for(spend_policy: &SpendPolicy) -> TransparentChangePolicy {
+    match spend_policy.transparent() {
+        Some(_) => TransparentChangePolicy::TransparentChangeAllowed,
+        None => TransparentChangePolicy::ShieldChange,
+    }
+}
+
+/// Validates the recipients against the privacy policy, proposes a transfer, and
+/// enforces both the privacy policy and the configured Orchard action limit on the
+/// resulting proposal.
+///
+/// Shared by the JSON-RPC methods that build a transaction from a
+/// [`TransactionRequest`] (`z_sendmany`, `pczt_create`).
+pub(super) fn propose_and_check(
+    wallet: &mut DbConnection,
+    params: &Network,
+    account_id: AccountUuid,
+    request: TransactionRequest,
+    privacy_policy: PrivacyPolicy,
+    confirmations_policy: ConfirmationsPolicy,
+    spend_policy: &SpendPolicy,
+) -> RpcResult<Proposal<StandardFeeRule, ReceivedNoteId>> {
+    // TODO: Fetch the real maximums within the account so we can detect correctly.
+    //       https://github.com/zcash/zallet/issues/257
+    let mut max_sapling_available = Zatoshis::const_from_u64(MAX_MONEY);
+    let mut max_orchard_available = Zatoshis::const_from_u64(MAX_MONEY);
+
+    for payment in request.payments().values() {
+        let value = payment
+            .amount()
+            .expect("Every payment built by `build_request` has an amount");
+
+        match Address::try_from_zcash_address(params, payment.recipient_address().clone()) {
+            Err(e) => return Err(LegacyCode::InvalidParameter.with_message(e.to_string())),
+            Ok(Address::Transparent(_) | Address::Tex(_)) => {
+                if !privacy_policy.allow_revealed_recipients() {
+                    return Err(IncompatiblePrivacyPolicy::TransparentRecipient.into());
+                }
+            }
+            Ok(Address::Sapling(_)) => {
+                match (
+                    privacy_policy.allow_revealed_amounts(),
+                    max_sapling_available - value,
+                ) {
+                    (false, None) => {
+                        return Err(IncompatiblePrivacyPolicy::RevealingSaplingAmount.into());
+                    }
+                    (false, Some(rest)) => max_sapling_available = rest,
+                    (true, _) => (),
+                }
+            }
+            Ok(Address::Unified(ua)) => {
+                match (
+                    privacy_policy.allow_revealed_amounts(),
+                    (
+                        ua.receiver_types().contains(&unified::Typecode::Orchard),
+                        max_orchard_available - value,
+                    ),
+                    (
+                        ua.receiver_types().contains(&unified::Typecode::Sapling),
+                        max_sapling_available - value,
+                    ),
+                ) {
+                    // The preferred receiver is Orchard, and we either allow revealed
+                    // amounts or have sufficient Orchard funds available to avoid it.
+                    (true, (true, _), _) => (),
+                    (false, (true, Some(rest)), _) => max_orchard_available = rest,
+
+                    // The preferred receiver is Sapling, and we either allow revealed
+                    // amounts or have sufficient Sapling funds available to avoid it.
+                    (true, _, (true, _)) => (),
+                    (false, _, (true, Some(rest))) => max_sapling_available = rest,
+
+                    // We need to reveal something in order to make progress.
+                    _ => {
+                        if privacy_policy.allow_revealed_recipients() {
+                            // Nothing to do here.
+                        } else if privacy_policy.allow_revealed_amounts() {
+                            return Err(IncompatiblePrivacyPolicy::TransparentReceiver.into());
+                        } else {
+                            return Err(IncompatiblePrivacyPolicy::RevealingReceiverAmounts.into());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let transparent_change_policy = transparent_change_policy_for(spend_policy);
+
+    // Where shielded change goes when the transaction has no shielded flows to infer a pool
+    // from. A transaction that does have shielded flows ignores this and keeps its change in
+    // the pool it is already using.
+    //
+    // This stays Orchard rather than Ironwood: the change strategy promotes it to Ironwood
+    // itself once NU6.3 is active (the turnstile forbids value from entering the Orchard
+    // pool, so change out of a purely transparent transaction has to land in Ironwood), and
+    // it does so against the transaction's target height, which is not known here. Naming
+    // Ironwood outright would instead send change to a pool that does not exist yet on a
+    // chain where NU6.3 has not activated.
+    let fallback_change_pool = ShieldedPool::Orchard;
+
+    // Shielded change is split across several notes, per the wallet's note-management
+    // configuration, so the account keeps a usable set of denominations.
+    let split_policy = APP.config().note_management.split_policy();
+
+    // Change too small to be worth its own output is added to the fee instead.
+    let dust_output_policy = DustOutputPolicy::default();
+
+    // No memo is attached to change. A change memo would force the change into a shielded
+    // pool, since a transparent output cannot carry one.
+    let change_memo = None;
+
+    let change_strategy = MultiOutputChangeStrategy::new(
+        StandardFeeRule::Zip317,
+        change_memo,
+        fallback_change_pool,
+        dust_output_policy,
+        split_policy,
+    )
+    .with_transparent_change_policy(transparent_change_policy);
+
+    let input_selector = GreedyInputSelector::new();
+
+    let proposal = propose_transfer::<_, _, _, _, Infallible>(
+        wallet,
+        params,
+        account_id,
+        &input_selector,
+        &change_strategy,
+        request,
+        confirmations_policy,
+        spend_policy,
+        // Inputs are not locked: the proposal is built, signed and stored within this
+        // operation, and Zallet exposes no RPC by which a caller could release a lock
+        // left behind by an operation that failed partway through.
+        //
+        // A PCZT breaks that assumption — `pczt_create` returns the proposal's inputs to
+        // the caller and the transaction is finished later, or never — but there is still
+        // no way to release a lock, so locking here would strand notes rather than protect
+        // them. `pczt_extract` records the transaction, which is what marks them spent.
+        None,
+        // Do not request a specific transaction version; building falls back to the version
+        // implied by the target height.
+        None,
+    )
+    // TODO: Map errors to `zcashd` shape.
+    .map_err(|e| {
+        LegacyCode::Wallet
+            .with_message(fl!("err-propose-transaction-failed", error = e.to_string()))
+    })?;
+
+    enforce_privacy_policy(&proposal, privacy_policy)?;
+
+    let orchard_actions_limit = APP.config().builder.limits.orchard_actions().into();
+    for step in proposal.steps() {
+        let orchard_spends = step
+            .shielded_inputs()
+            .iter()
+            .flat_map(|inputs| inputs.notes())
+            .filter(|note| note.note().pool() == ShieldedPool::Orchard)
+            .count();
+
+        let orchard_outputs = step
+            .payment_pools()
+            .values()
+            .filter(|pool| pool == &&PoolType::ORCHARD)
+            .count()
+            + step
+                .balance()
+                .proposed_change()
+                .iter()
+                .filter(|change| change.output_pool() == PoolType::ORCHARD)
+                .count();
+
+        let orchard_actions = orchard_spends.max(orchard_outputs);
+
+        if orchard_actions > orchard_actions_limit {
+            let (count, kind) = if orchard_outputs <= orchard_actions_limit {
+                (orchard_spends, "inputs")
+            } else if orchard_spends <= orchard_actions_limit {
+                (orchard_outputs, "outputs")
+            } else {
+                (orchard_actions, "actions")
+            };
+
+            return Err(LegacyCode::Misc.with_message(fl!(
+                "err-excess-orchard-actions",
+                count = count,
+                kind = kind,
+                limit = orchard_actions_limit,
+                config = "-orchardactionlimit=N",
+                bound = format!("N >= %u"),
+            )));
+        }
+    }
+
+    Ok(proposal)
 }
 
 /// A strategy to use for managing privacy when constructing a transaction.
@@ -278,21 +546,85 @@ impl PrivacyPolicy {
     pub(super) fn allow_revealed_recipients(&self) -> bool {
         self.is_compatible_with(PrivacyPolicy::AllowRevealedRecipients)
     }
+}
 
-    pub(super) fn allow_revealed_senders(&self) -> bool {
-        self.is_compatible_with(PrivacyPolicy::AllowRevealedSenders)
-    }
+/// What a single proposal step reveals: the least permissive [`PrivacyPolicy`] that still
+/// allows it, and the error describing the leak if the caller's policy does not reach it.
+///
+/// Returns `None` when the step reveals nothing, which every policy permits.
+///
+/// This is the single source of truth for the privacy implications of a step.
+/// [`enforce_privacy_policy`] and [`required_privacy_policy`] are both derived from it, so
+/// the check and the report cannot disagree about what a proposal leaks.
+fn step_privacy_requirement<NoteRef>(
+    step: &Step<NoteRef>,
+) -> Option<(PrivacyPolicy, IncompatiblePrivacyPolicy)> {
+    let has_transparent_recipient = step.output_in_pool(PoolType::Transparent);
+    let has_transparent_change = step.change_in_pool(PoolType::Transparent);
+    let has_sapling_recipient =
+        step.output_in_pool(PoolType::SAPLING) || step.change_in_pool(PoolType::SAPLING);
+    let has_orchard_recipient =
+        step.output_in_pool(PoolType::ORCHARD) || step.change_in_pool(PoolType::ORCHARD);
 
-    pub(super) fn allow_fully_transparent(&self) -> bool {
-        self.is_compatible_with(PrivacyPolicy::AllowFullyTransparent)
-    }
+    if step.input_in_pool(PoolType::Transparent) {
+        let received_addrs = step
+            .transparent_inputs()
+            .iter()
+            .map(|input| input.recipient_address())
+            .collect::<HashSet<_>>();
 
-    pub(super) fn allow_linking_account_addresses(&self) -> bool {
-        self.is_compatible_with(PrivacyPolicy::AllowLinkingAccountAddresses)
-    }
-
-    pub(super) fn allow_no_privacy(&self) -> bool {
-        self.is_compatible_with(PrivacyPolicy::NoPrivacy)
+        if received_addrs.len() > 1 {
+            if has_transparent_recipient || has_transparent_change {
+                Some((
+                    PrivacyPolicy::NoPrivacy,
+                    IncompatiblePrivacyPolicy::NoPrivacy,
+                ))
+            } else {
+                Some((
+                    PrivacyPolicy::AllowLinkingAccountAddresses,
+                    IncompatiblePrivacyPolicy::LinkingAccountAddresses,
+                ))
+            }
+        } else if has_transparent_recipient || has_transparent_change {
+            Some((
+                PrivacyPolicy::AllowFullyTransparent,
+                IncompatiblePrivacyPolicy::FullyTransparent,
+            ))
+        } else {
+            Some((
+                PrivacyPolicy::AllowRevealedSenders,
+                IncompatiblePrivacyPolicy::TransparentSender,
+            ))
+        }
+    } else if has_transparent_recipient {
+        Some((
+            PrivacyPolicy::AllowRevealedRecipients,
+            IncompatiblePrivacyPolicy::TransparentRecipient,
+        ))
+    } else if has_transparent_change {
+        // The same policy as an explicit transparent recipient, but reported separately:
+        // the caller did not ask for this output.
+        Some((
+            PrivacyPolicy::AllowRevealedRecipients,
+            IncompatiblePrivacyPolicy::TransparentChange,
+        ))
+    } else if step.input_in_pool(PoolType::ORCHARD) && has_sapling_recipient {
+        // TODO: This should only trigger when there is a non-fee valueBalance.
+        // TODO: Determine whether this is due to the presence of an explicit Sapling
+        // recipient address, or having insufficient funds to pay a UA within a single pool.
+        Some((
+            PrivacyPolicy::AllowRevealedAmounts,
+            IncompatiblePrivacyPolicy::RevealingSaplingAmount,
+        ))
+    } else if step.input_in_pool(PoolType::SAPLING) && has_orchard_recipient {
+        // TODO: This should only trigger when there is a non-fee valueBalance.
+        Some((
+            PrivacyPolicy::AllowRevealedAmounts,
+            IncompatiblePrivacyPolicy::RevealingOrchardAmount,
+        ))
+    } else {
+        // Nothing is revealed by this step.
+        None
     }
 }
 
@@ -301,146 +633,29 @@ pub(super) fn enforce_privacy_policy<FeeRuleT, NoteRef>(
     privacy_policy: PrivacyPolicy,
 ) -> Result<(), IncompatiblePrivacyPolicy> {
     for step in proposal.steps() {
-        let has_transparent_recipient = step.output_in_pool(PoolType::Transparent);
-        let has_transparent_change = step.change_in_pool(PoolType::Transparent);
-        let has_sapling_recipient =
-            step.output_in_pool(PoolType::SAPLING) || step.change_in_pool(PoolType::SAPLING);
-        let has_orchard_recipient =
-            step.output_in_pool(PoolType::ORCHARD) || step.change_in_pool(PoolType::ORCHARD);
-
-        if step.input_in_pool(PoolType::Transparent) {
-            let received_addrs = step
-                .transparent_inputs()
-                .iter()
-                .map(|input| input.recipient_address())
-                .collect::<HashSet<_>>();
-
-            if received_addrs.len() > 1 {
-                if has_transparent_recipient || has_transparent_change {
-                    if !privacy_policy.allow_no_privacy() {
-                        return Err(IncompatiblePrivacyPolicy::NoPrivacy);
-                    }
-                } else if !privacy_policy.allow_linking_account_addresses() {
-                    return Err(IncompatiblePrivacyPolicy::LinkingAccountAddresses);
-                }
-            } else if has_transparent_recipient || has_transparent_change {
-                if !privacy_policy.allow_fully_transparent() {
-                    return Err(IncompatiblePrivacyPolicy::FullyTransparent);
-                }
-            } else if !privacy_policy.allow_revealed_senders() {
-                return Err(IncompatiblePrivacyPolicy::TransparentSender);
-            }
-        } else if has_transparent_recipient {
-            if !privacy_policy.allow_revealed_recipients() {
-                return Err(IncompatiblePrivacyPolicy::TransparentRecipient);
-            }
-        } else if has_transparent_change {
-            if !privacy_policy.allow_revealed_recipients() {
-                return Err(IncompatiblePrivacyPolicy::TransparentChange);
-            }
-        } else if step.input_in_pool(PoolType::ORCHARD) && has_sapling_recipient {
-            // TODO: This should only trigger when there is a non-fee valueBalance.
-            if !privacy_policy.allow_revealed_amounts() {
-                // TODO: Determine whether this is due to the presence of an explicit
-                // Sapling recipient address, or having insufficient funds to pay a UA
-                // within a single pool.
-                return Err(IncompatiblePrivacyPolicy::RevealingSaplingAmount);
-            }
-        } else if step.input_in_pool(PoolType::SAPLING) && has_orchard_recipient {
-            // TODO: This should only trigger when there is a non-fee valueBalance.
-            if !privacy_policy.allow_revealed_amounts() {
-                return Err(IncompatiblePrivacyPolicy::RevealingOrchardAmount);
-            }
+        // Each `allow_*` predicate is itself `is_compatible_with` of the corresponding
+        // policy, so checking the step's requirement directly is the same test the
+        // per-branch predicates used to perform.
+        if let Some((required, incompatible)) = step_privacy_requirement(step)
+            && !privacy_policy.is_compatible_with(required)
+        {
+            return Err(incompatible);
         }
     }
 
-    // If we reach here, no step revealed anything; this proposal satisfies any privacy
-    // policy.
-    assert!(privacy_policy.is_compatible_with(PrivacyPolicy::FullPrivacy));
     Ok(())
-}
-
-/// Returns the privacy policy required to execute the given proposal.
-///
-/// This is the inverse of [`enforce_privacy_policy`]: rather than checking a caller-supplied
-/// policy against the information a proposal would leak, it computes the strictest
-/// [`PrivacyPolicy`] that still permits the proposal. Any policy that
-/// [`PrivacyPolicy::is_compatible_with`] the returned value is sufficient to execute the
-/// transaction; the returned value is itself the strictest such policy.
-///
-/// This reports the privacy implications of a proposed transaction without requiring the
-/// caller to commit to a policy up front.
-// Extracted ahead of its caller: this is not yet wired into a JSON-RPC method on this
-// branch, hence `allow(dead_code)`; drop the attribute when the propose path lands.
-#[allow(dead_code)]
-pub(super) fn required_privacy_policy<FeeRuleT, NoteRef>(
-    proposal: &Proposal<FeeRuleT, NoteRef>,
-) -> PrivacyPolicy {
-    // The required policy for the whole proposal is the meet (greatest lower bound, i.e.
-    // most-permissive-needed) of the policies required by each step. We start from
-    // `FullPrivacy` (the strictest policy, the lattice top); `meet` with each step's
-    // requirement relaxes it exactly as much as that step's leakage demands.
-    proposal
-        .steps()
-        .iter()
-        .fold(PrivacyPolicy::FullPrivacy, |required, step| {
-            // This mirrors the branch structure of `enforce_privacy_policy` exactly; keep
-            // the two in sync. Each step fires exactly one branch, yielding the single
-            // policy level that step requires.
-            let has_transparent_recipient = step.output_in_pool(PoolType::Transparent);
-            let has_transparent_change = step.change_in_pool(PoolType::Transparent);
-            let has_sapling_recipient =
-                step.output_in_pool(PoolType::SAPLING) || step.change_in_pool(PoolType::SAPLING);
-            let has_orchard_recipient =
-                step.output_in_pool(PoolType::ORCHARD) || step.change_in_pool(PoolType::ORCHARD);
-
-            let step_required = if step.input_in_pool(PoolType::Transparent) {
-                let received_addrs = step
-                    .transparent_inputs()
-                    .iter()
-                    .map(|input| input.recipient_address())
-                    .collect::<HashSet<_>>();
-
-                if received_addrs.len() > 1 {
-                    if has_transparent_recipient || has_transparent_change {
-                        PrivacyPolicy::NoPrivacy
-                    } else {
-                        PrivacyPolicy::AllowLinkingAccountAddresses
-                    }
-                } else if has_transparent_recipient || has_transparent_change {
-                    PrivacyPolicy::AllowFullyTransparent
-                } else {
-                    PrivacyPolicy::AllowRevealedSenders
-                }
-            } else if has_transparent_recipient || has_transparent_change {
-                PrivacyPolicy::AllowRevealedRecipients
-            } else if (step.input_in_pool(PoolType::ORCHARD) && has_sapling_recipient)
-                || (step.input_in_pool(PoolType::SAPLING) && has_orchard_recipient)
-            {
-                // TODO: As in `enforce_privacy_policy`, this should only trigger when there
-                // is a non-fee valueBalance.
-                PrivacyPolicy::AllowRevealedAmounts
-            } else {
-                // Nothing is revealed by this step.
-                PrivacyPolicy::FullPrivacy
-            };
-
-            required.meet(step_required)
-        })
 }
 
 /// Parses the optional `privacy_policy` JSON-RPC argument into a [`PrivacyPolicy`],
 /// defaulting to [`PrivacyPolicy::FullPrivacy`] when absent and rejecting the unsupported
 /// `"LegacyCompat"` policy.
-// Extracted ahead of its caller; not yet wired into a JSON-RPC method on this branch, hence
-// `allow(dead_code)`.
-#[allow(dead_code)]
 pub(super) fn parse_privacy_policy(privacy_policy: Option<&str>) -> RpcResult<PrivacyPolicy> {
     match privacy_policy {
-        Some("LegacyCompat") => Err(LegacyCode::InvalidParameter
-            .with_static("LegacyCompat privacy policy is unsupported in Zallet")),
+        Some("LegacyCompat") => {
+            Err(LegacyCode::InvalidParameter.with_message(fl!("err-privacy-policy-legacy-compat")))
+        }
         Some(s) => PrivacyPolicy::from_str(s).ok_or_else(|| {
-            LegacyCode::InvalidParameter.with_message(format!("Unknown privacy policy {s}"))
+            LegacyCode::InvalidParameter.with_message(fl!("err-privacy-policy-unknown", policy = s))
         }),
         None => Ok(PrivacyPolicy::FullPrivacy),
     }
@@ -738,8 +953,7 @@ pub(super) fn get_account_for_address(
         }
     }
 
-    Err(LegacyCode::InvalidAddressOrKey
-        .with_static("Invalid from address, no payment source found for address."))
+    Err(LegacyCode::InvalidAddressOrKey.with_message(fl!("err-from-address-no-payment-source")))
 }
 
 /// Whether an account with this ZIP 32 derivation holds the legacy `zcashd` pool of funds
@@ -1598,6 +1812,10 @@ mod privacy_policy_tests {
 
     #[test]
     fn parse_privacy_policy_rejects_legacy_compat() {
+        // These messages are localized, so the loader must be populated before
+        // asserting on them; `fl!` is inert until a language is loaded.
+        crate::i18n::load_languages(&[]);
+
         let err = parse_privacy_policy(Some("LegacyCompat"))
             .expect_err("LegacyCompat should be rejected");
         assert_eq!(
@@ -1608,6 +1826,8 @@ mod privacy_policy_tests {
 
     #[test]
     fn parse_privacy_policy_rejects_unknown_policy() {
+        crate::i18n::load_languages(&[]);
+
         let err =
             parse_privacy_policy(Some("Whatever")).expect_err("unknown policy should be rejected");
         assert_eq!(err.message(), "Unknown privacy policy Whatever");
@@ -1697,6 +1917,8 @@ mod privacy_policy_tests {
         /// is reported as an unknown policy.
         #[test]
         fn parse_privacy_policy_rejects_arbitrary_unknown_strings(s in "[A-Za-z]{0,24}") {
+            crate::i18n::load_languages(&[]);
+
             prop_assume!(PrivacyPolicy::from_str(&s).is_none() && s != "LegacyCompat");
             let err = parse_privacy_policy(Some(&s))
                 .expect_err("an unknown policy name should be rejected");

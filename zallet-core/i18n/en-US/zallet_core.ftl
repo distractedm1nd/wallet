@@ -209,6 +209,22 @@ err-transparent-payment-missing =
     The built transaction is missing a requested payment output (to {$address}). The wallet
     database is corrupted or has been tampered with. The transaction has not been broadcast.
 
+## Transaction proposal errors
+
+err-propose-transaction-failed = Failed to propose transaction: {$error}
+err-invalid-from-address =
+    Invalid from address: should be a taddr, zaddr, or UA.
+err-from-address-no-payment-source =
+    Invalid from address, no payment source found for address.
+# “Zallet” here is the product name, so it is not the lowercase `{-zallet}`
+# command-name term.
+err-privacy-policy-legacy-compat =
+    LegacyCompat privacy policy is unsupported in Zallet
+err-privacy-policy-unknown = Unknown privacy policy {$policy}
+err-confirmations-policy-invalid =
+    Configuration error: minimum confirmations for spending trusted TXOs cannot
+    exceed that for untrusted TXOs.
+
 # errors in migration of configuration data from the zcashd `zcash.conf` config file format
 
 err-migrate-allow-warnings = To allow a migration with warnings, use '{-allow-warnings}'
