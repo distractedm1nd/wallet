@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM stagex/pallet-rust:1.91.1@sha256:4062550919db682ebaeea07661551b5b89b3921e3f3a2b0bc665ddea7f6af1ca AS pallet-rust
+FROM stagex/pallet-rust:1.95.0@sha256:2d90b9552412ee2c4fa2a13b489c2f28c044be7fb5d6a942bfd5a480a5c288fd AS pallet-rust
 FROM stagex/user-protobuf:26.1@sha256:b399bb058216a55130d83abcba4e5271d8630fff55abbb02ed40818b0d96ced1 AS protobuf
 FROM stagex/user-abseil-cpp:20240116.2@sha256:183e8aff7b3e8b37ab8e89a20a364a21d99ce506ae624028b92d3bed747d2c06 AS abseil-cpp
 
@@ -13,6 +13,7 @@ ENV SOURCE_DATE_EPOCH=1
 ENV TARGET_ARCH=x86_64-unknown-linux-musl
 ENV CFLAGS=-target\ x86_64-unknown-linux-musl
 ENV CXXFLAGS=-stdlib=libc++
+ENV CXXSTDLIB=c++
 ENV CARGO_HOME=/usr/local/cargo
 ENV CARGO_TARGET_DIR="/usr/src/zallet/target"
 ENV CARGO_INCREMENTAL=0

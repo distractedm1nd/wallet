@@ -20,7 +20,7 @@
         # crates.
         targetEnvSuffix =
           builtins.replaceStrings [ "-" "." ] [ "_" "_" ] muslTarget;
-        rustToolchain = pkgs.rust-bin.stable."1.88.0".default.override {
+        rustToolchain = pkgs.rust-bin.stable."1.95.0".default.override {
           targets = [ muslTarget ];
         };
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;

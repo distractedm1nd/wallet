@@ -24,9 +24,9 @@
 
 # --- Stage 1: build ---------------------------------------------------------
 # Digest-pin the base so the build is a function of its inputs only (bump the
-# tag AND the digest together, deliberately). rust 1.91.1 on bookworm matches
+# tag AND the digest together, deliberately). rust 1.95.0 on bookworm matches
 # the runtime base below so the dynamically-linked glibc binary just works.
-FROM rust:1.91.1-slim-bookworm@sha256:8514999d4786ef12efe89239e86b3d0a021b94b9d35108c8efe6c79ca7dc1a65 AS builder
+FROM rust:1.95.0-slim-bookworm@sha256:d7482085ff5b415f84dba5647ae71606650bdef00db7aeb69f4b3d170c3e4082 AS builder
 
 # Build deps: protobuf (tonic/PROTOC), clang+llvm (bindgen / *-sys C/C++ deps),
 # pkg-config, and git (zaino-state's build.rs embeds the commit).
@@ -38,7 +38,7 @@ FROM rust:1.91.1-slim-bookworm@sha256:8514999d4786ef12efe89239e86b3d0a021b94b9d3
 # even though nothing in this repo changed. When that happens, re-read the
 # candidate versions from the pinned base and bump the offending pin:
 #
-#   docker run --rm rust:1.91.1-slim-bookworm@sha256:8514999d... \
+#   docker run --rm rust:1.95.0-slim-bookworm@sha256:d7482085... \
 #     bash -c 'apt-get update -qq && apt-cache policy protobuf-compiler'
 #
 # (Pinning apt to a snapshot.debian.org timestamp would make this immune, at the

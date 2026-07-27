@@ -74,7 +74,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 Zallet is a Zcash full node wallet, designed to replace the legacy wallet that was included within zcashd.
 
 - **Rust edition**: 2024
-- **MSRV**: 1.88 (pinned in `rust-toolchain.toml`)
+- **MSRV**: 1.95 (pinned in `rust-toolchain.toml`)
 - **License**: MIT OR Apache-2.0
 - **Repository**: https://github.com/zcash/zallet
 
