@@ -20,7 +20,7 @@ use zcash_client_backend::{
     wallet::NoteId,
 };
 use zcash_keys::address::Address;
-use zcash_protocol::{ShieldedPool, value::Zatoshis};
+use zcash_protocol::{ShieldedPool, consensus::BlockHeight, value::Zatoshis};
 use zip32::Scope;
 
 use crate::components::{
@@ -111,6 +111,31 @@ pub(super) const PARAM_INCLUDE_WATCHONLY_DESC: &str =
 pub(super) const PARAM_ADDRESSES_DESC: &str =
     "If non-empty, only outputs received by the provided addresses will be returned.";
 pub(super) const PARAM_AS_OF_HEIGHT_DESC: &str = "Execute the query as if it were run when the blockchain was at the height specified by this argument.";
+
+/// The number of confirmations that an output of a transaction mined at `mined_height` has as
+/// of `target_height`.
+///
+/// An output of a transaction that is not mined in the main chain has zero confirmations. Such
+/// an output can be reported by this RPC when its transaction is in the mempool, or when a
+/// transaction that had been mined has been un-mined by a reorg and its containing block has
+/// not yet been re-scanned.
+fn confirmation_count(target_height: TargetHeight, mined_height: Option<BlockHeight>) -> u32 {
+    // Subtraction of block heights saturates at zero, which correctly reports a transaction
+    // mined at or above the target height (possible when `asOfHeight` places the target below
+    // the chain tip) as having no confirmations as of that height.
+    mined_height.map_or(0, |h| target_height - h)
+}
+
+/// Whether an output with the given number of confirmations is within the range of
+/// confirmations requested for this query.
+///
+/// Both bounds are inclusive: an output with exactly `minconf` (or exactly `maxconf`)
+/// confirmations is reported. Because an unmined transaction's outputs have zero
+/// confirmations, they are in range only for `minconf = 0`, which this RPC permits whenever
+/// `asOfHeight` is absent.
+fn confirmations_in_range(confirmations: u32, minconf: u32, maxconf: Option<u32>) -> bool {
+    confirmations >= minconf && maxconf.is_none_or(|c| confirmations <= c)
+}
 
 // FIXME: the following parameters are not yet properly supported
 // * include_watchonly
@@ -227,7 +252,13 @@ pub(crate) fn call(
             })?;
 
         for (utxo, generated) in utxos {
-            let confirmations = utxo.mined_height().map(|h| target_height - h).unwrap_or(0);
+            let confirmations = confirmation_count(target_height, utxo.mined_height());
+
+            // `get_spendable_transparent_outputs` applies `minconf` itself, but not `maxconf`;
+            // both bounds are checked here so that every pool reports the same range.
+            if !confirmations_in_range(confirmations, minconf, maxconf) {
+                continue;
+            }
 
             let wallet_internal = wallet
                 .get_transparent_address_metadata(account_id, utxo.recipient_address())
@@ -311,17 +342,11 @@ pub(crate) fn call(
                 .iter()
                 .all(|addr| addr.to_sapling_address() == Some(n.note().recipient()))
         }) {
-            let tx_mined_height = get_mined_height(*note.txid())?;
-            let confirmations = tx_mined_height
-                .map_or(0, |h| u32::from(target_height.saturating_sub(u32::from(h))));
+            let confirmations = confirmation_count(target_height, get_mined_height(*note.txid())?);
 
-            // skip notes that do not have sufficient confirmations according to minconf,
-            // or that have too many confirmations according to maxconf
-            if tx_mined_height
-                .iter()
-                .any(|h| *h > target_height.saturating_sub(minconf))
-                || maxconf.iter().any(|c| confirmations > *c)
-            {
+            // Skip notes that do not have sufficient confirmations according to `minconf`, or
+            // that have too many confirmations according to `maxconf`.
+            if !confirmations_in_range(confirmations, minconf, maxconf) {
                 continue;
             }
 
@@ -360,17 +385,11 @@ pub(crate) fn call(
                     })
             })
         }) {
-            let tx_mined_height = get_mined_height(*note.txid())?;
-            let confirmations = tx_mined_height
-                .map_or(0, |h| u32::from(target_height.saturating_sub(u32::from(h))));
+            let confirmations = confirmation_count(target_height, get_mined_height(*note.txid())?);
 
-            // skip notes that do not have sufficient confirmations according to minconf,
-            // or that have too many confirmations according to maxconf
-            if tx_mined_height
-                .iter()
-                .any(|h| *h > target_height.saturating_sub(minconf))
-                || maxconf.iter().any(|c| confirmations > *c)
-            {
+            // Skip notes that do not have sufficient confirmations according to `minconf`, or
+            // that have too many confirmations according to `maxconf`.
+            if !confirmations_in_range(confirmations, minconf, maxconf) {
                 continue;
             }
 
@@ -417,17 +436,11 @@ pub(crate) fn call(
                     })
             })
         }) {
-            let tx_mined_height = get_mined_height(*note.txid())?;
-            let confirmations = tx_mined_height
-                .map_or(0, |h| u32::from(target_height.saturating_sub(u32::from(h))));
+            let confirmations = confirmation_count(target_height, get_mined_height(*note.txid())?);
 
-            // skip notes that do not have sufficient confirmations according to minconf,
-            // or that have too many confirmations according to maxconf
-            if tx_mined_height
-                .iter()
-                .any(|h| *h > target_height.saturating_sub(minconf))
-                || maxconf.iter().any(|c| confirmations > *c)
-            {
+            // Skip notes that do not have sufficient confirmations according to `minconf`, or
+            // that have too many confirmations according to `maxconf`.
+            if !confirmations_in_range(confirmations, minconf, maxconf) {
                 continue;
             }
 
@@ -499,10 +512,97 @@ fn transparent_unspent_output(
 
 #[cfg(test)]
 mod tests {
-    use zcash_protocol::value::Zatoshis;
+    use zcash_client_backend::data_api::wallet::TargetHeight;
+    use zcash_protocol::{consensus::BlockHeight, value::Zatoshis};
 
-    use super::{UnspentOutput, transparent_unspent_output};
+    use super::{
+        UnspentOutput, confirmation_count, confirmations_in_range, transparent_unspent_output,
+    };
     use crate::components::json_rpc::utils::value_from_zatoshis;
+
+    /// The height of the next block to be mined, as used by the RPC. An output mined in block
+    /// 99 therefore has one confirmation, and one mined in block 90 has ten.
+    const TARGET: u32 = 100;
+
+    fn target() -> TargetHeight {
+        TargetHeight::from(BlockHeight::from_u32(TARGET))
+    }
+
+    fn mined_in(height: u32) -> Option<BlockHeight> {
+        Some(BlockHeight::from_u32(height))
+    }
+
+    #[test]
+    fn unmined_transaction_has_zero_confirmations() {
+        assert_eq!(confirmation_count(target(), None), 0);
+    }
+
+    #[test]
+    fn confirmations_count_the_mining_block() {
+        assert_eq!(confirmation_count(target(), mined_in(TARGET - 1)), 1);
+        assert_eq!(confirmation_count(target(), mined_in(TARGET - 10)), 10);
+    }
+
+    // An `asOfHeight` in the past places the target height below the chain tip, so a
+    // transaction known to the wallet may be mined at or above it. Such a transaction has no
+    // confirmations as of the target height, rather than a negative or wrapped count.
+    #[test]
+    fn transaction_mined_at_or_above_target_has_zero_confirmations() {
+        assert_eq!(confirmation_count(target(), mined_in(TARGET)), 0);
+        assert_eq!(confirmation_count(target(), mined_in(TARGET + 5)), 0);
+    }
+
+    // Regression: an output of an unmined transaction has zero confirmations, and so must be
+    // excluded whenever at least one confirmation is required. This previously tested the
+    // mined height with `Option::iter().any(..)`, which is vacuously false for an unmined
+    // transaction, so such outputs were reported at every `minconf`.
+    #[test]
+    fn unmined_output_is_excluded_at_minconf_1() {
+        assert!(!confirmations_in_range(
+            confirmation_count(target(), None),
+            1,
+            None
+        ));
+    }
+
+    // ... but `minconf = 0` is permitted when `asOfHeight` is absent, and admits exactly those
+    // zero-confirmation outputs.
+    #[test]
+    fn unmined_output_is_included_at_minconf_0() {
+        assert!(confirmations_in_range(
+            confirmation_count(target(), None),
+            0,
+            None
+        ));
+    }
+
+    #[test]
+    fn minconf_bound_is_inclusive() {
+        let confirmations = confirmation_count(target(), mined_in(TARGET - 10));
+        assert!(!confirmations_in_range(confirmations, 11, None));
+        assert!(confirmations_in_range(confirmations, 10, None));
+        assert!(confirmations_in_range(confirmations, 9, None));
+    }
+
+    // Regression: `maxconf` was applied only to shielded notes, so transparent outputs with
+    // more than `maxconf` confirmations were reported regardless. Both bounds now come from
+    // this single predicate, which every pool consults.
+    #[test]
+    fn maxconf_bound_is_inclusive() {
+        let confirmations = confirmation_count(target(), mined_in(TARGET - 10));
+        assert!(!confirmations_in_range(confirmations, 1, Some(9)));
+        assert!(confirmations_in_range(confirmations, 1, Some(10)));
+        assert!(confirmations_in_range(confirmations, 1, Some(11)));
+    }
+
+    #[test]
+    fn absent_maxconf_imposes_no_upper_bound() {
+        assert!(confirmations_in_range(
+            confirmation_count(target(), mined_in(0)),
+            1,
+            None
+        ));
+    }
 
     /// Renders a transparent UTXO entry with the given coinbase origin to its JSON
     /// representation (the actual RPC output contract).
