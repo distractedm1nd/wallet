@@ -76,35 +76,6 @@ fn block_fetch_error(
     }
 }
 
-/// Converts the wallet's network parameters into Zaino's network type.
-fn network_to_zaino(network: Network) -> zaino_common::Network {
-    use zcash_protocol::consensus;
-    match network {
-        Network::Consensus(network) => match network {
-            consensus::Network::MainNetwork => zaino_common::Network::Mainnet,
-            consensus::Network::TestNetwork => zaino_common::Network::Testnet,
-        },
-        // TODO: This does not create a compatible regtest network because Zebra does
-        // not have the necessary flexibility.
-        Network::RegTest(local_network) => {
-            zaino_common::Network::Regtest(zaino_common::network::ActivationHeights {
-                before_overwinter: Some(1),
-                overwinter: local_network.overwinter.map(|h| h.into()),
-                sapling: local_network.sapling.map(|h| h.into()),
-                blossom: local_network.blossom.map(|h| h.into()),
-                heartwood: local_network.heartwood.map(|h| h.into()),
-                canopy: local_network.canopy.map(|h| h.into()),
-                nu5: local_network.nu5.map(|h| h.into()),
-                nu6: local_network.nu6.map(|h| h.into()),
-                nu6_1: local_network.nu6_1.map(|h| h.into()),
-                nu6_2: local_network.nu6_2.map(|h| h.into()),
-                nu6_3: local_network.nu6_3.map(|h| h.into()),
-                nu7: None,
-            })
-        }
-    }
-}
-
 /// Converts a `zcash_protocol` block height into a Zaino block height.
 fn to_zaino_height(height: BlockHeight) -> zaino_state::Height {
     u32::from(height)
@@ -115,8 +86,8 @@ fn to_zaino_height(height: BlockHeight) -> zaino_state::Height {
 /// The Zaino finalised-state database schema version to target.
 ///
 /// `1` selects Zaino's latest v1 finalised-state schema. We run the indexer in ephemeral
-/// mode (see [`ChainIndexConfig::new`] below), so no persistent finalised-state database
-/// is actually opened and this value has no on-disk effect; it is set to the current
+/// mode (see the [`ChainIndexConfig`] construction below), so no persistent finalised-state
+/// database is actually opened and this value has no on-disk effect; it is set to the current
 /// schema version for forward-compatibility if ephemeral mode is ever disabled.
 const ZAINO_FINALISED_DB_VERSION: u32 = 1;
 
@@ -206,8 +177,8 @@ impl ZainoChain {
         .await
         .map_err(|e| ErrorKind::Init.context(e))?;
 
-        let indexer_config = ChainIndexConfig::new(
-            StorageConfig {
+        let indexer_config = ChainIndexConfig {
+            storage: StorageConfig {
                 cache: CacheConfig::default(),
                 database: DatabaseConfig {
                     path: config.indexer_db_path().to_path_buf(),
@@ -219,12 +190,15 @@ impl ZainoChain {
                     ..Default::default()
                 },
             },
-            ZAINO_FINALISED_DB_VERSION,
-            network_to_zaino(params),
+            db_version: ZAINO_FINALISED_DB_VERSION,
+            // zaino 0.5 carries the runtime network (activation schedule adopted from
+            // the validator) as a `zebra_chain::parameters::Network`; zallet already
+            // derives that for the co-located-zebrad read-state path.
+            network: network_to_zebra(&params).map_err(|e| ErrorKind::Init.context(e))?,
             // Run the finalised state ephemerally: no persistent database, finalised
             // reads are served from the backing validator.
-            true,
-        );
+            ephemeral: true,
+        };
 
         // Select the chain-data source. By default Zaino fetches all chain data over
         // JSON-RPC; if `[indexer.read_state_service]` is configured, it instead reads
@@ -247,7 +221,7 @@ impl ZainoChain {
                 let source = ValidatorConnector::State(State {
                     read_state_service,
                     mempool_fetcher: fetcher.clone(),
-                    network: network_to_zaino(params),
+                    network: network_to_zebra(&params).map_err(|e| ErrorKind::Init.context(e))?,
                     chain_tip_change,
                     // The wallet retains ownership of the syncer via the
                     // `AbortOnDrop` guard below (aborted on every shutdown path),

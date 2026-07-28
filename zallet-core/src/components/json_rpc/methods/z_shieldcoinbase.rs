@@ -16,7 +16,8 @@ use zcash_client_backend::{
         Account as _, CoinbaseFilter, InputSource, WalletRead,
         wallet::{
             ConfirmationsPolicy, SpendingKeys, TargetHeight, create_proposed_transactions,
-            input_selection::GreedyInputSelector, propose_shielding_coinbase,
+            input_selection::{GreedyInputSelector, LockFilter, LockedInputPolicy},
+            propose_shielding_coinbase,
         },
     },
     fees::StandardFeeRule,
@@ -221,6 +222,10 @@ pub(crate) async fn call<C: Chain>(
         to_zcash_address,
         memo,
         limit_usize,
+        // Inputs are not locked: the proposal is built, signed and stored within this
+        // operation, and Zallet exposes no RPC by which a caller could release a lock
+        // left behind by an operation that failed partway through.
+        None,
     )
     .map_err(|e| {
         LegacyCode::Wallet.with_message(format!("Failed to propose shielding transaction: {e}"))
@@ -489,6 +494,11 @@ fn enumerate_eligible(
                 target_height,
                 ConfirmationsPolicy::MIN,
                 CoinbaseFilter::CoinbaseOnly,
+                // This enumeration is subtracted from the proposal's selected inputs to
+                // report what remains shieldable, so it must mirror the candidate set the
+                // shielding selector drew from: `GreedyInputSelector`'s default
+                // `LockedInputPolicy`, which excludes locked outputs.
+                LockFilter::Policy(&LockedInputPolicy::Exclude),
             )
             .map_err(|e| LegacyCode::Database.with_message(e.to_string()))?;
         total_utxos = total_utxos.saturating_add(utxos.len() as u64);

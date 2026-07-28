@@ -313,6 +313,10 @@ pub(crate) async fn call<C: Chain>(
         request,
         confirmations_policy,
         &spend_policy,
+        // Inputs are not locked: the proposal is built, signed and stored within this
+        // operation, and Zallet exposes no RPC by which a caller could release a lock
+        // left behind by an operation that failed partway through.
+        None,
         // Do not request a specific transaction version; building falls back to the version
         // implied by the target height.
         None,

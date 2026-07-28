@@ -2,7 +2,10 @@ use documented::Documented;
 use jsonrpsee::core::RpcResult;
 use schemars::JsonSchema;
 use serde::Serialize;
-use zcash_client_backend::data_api::{InputSource, NoteFilter, WalletRead, wallet::TargetHeight};
+use zcash_client_backend::data_api::{
+    InputSource, NoteFilter, WalletRead,
+    wallet::{TargetHeight, input_selection::LockFilter},
+};
 use zcash_protocol::{ShieldedPool, value::Zatoshis};
 
 use crate::components::{
@@ -67,7 +70,15 @@ pub(crate) fn call(
         .map_err(|e| LegacyCode::Database.with_message(e.to_string()))?
     {
         let account_metadata = wallet
-            .get_account_metadata(account_id, &selector, target_height, &[])
+            // Locked notes are still unspent notes held by the account; a count that
+            // silently dropped them would fluctuate with in-flight proposals.
+            .get_account_metadata(
+                account_id,
+                &selector,
+                target_height,
+                &[],
+                LockFilter::Unfiltered,
+            )
             .map_err(|e| LegacyCode::Database.with_message(e.to_string()))?;
 
         if let Some(note_count) = account_metadata.note_count(ShieldedPool::Sapling) {

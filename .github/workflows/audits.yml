@@ -39,7 +39,27 @@ jobs:
         env:
           TOOLCHAIN: ${{steps.toolchain.outputs.name}}
       - run: cargo install cargo-vet --version ~0.10
+      # cargo-vet decorates each `user-id` in audits.toml with a `# Name (login)`
+      # comment, but only for publishers it can resolve, and it resolves them
+      # solely from the current workspace's imports.lock -- which in turn only
+      # holds publishers of crates in that workspace's own graph. The shared
+      # audits.toml therefore has no single rendering that satisfies every
+      # workspace: entries trusting a publisher whose crates appear in only some
+      # of the graphs (e.g. the zebra-* and tower-* crates, absent from the root
+      # graph) get the comment from those workspaces and lose it from the others,
+      # and cargo-vet reports the mismatch as a store-format error. Normalise the
+      # store for this graph first so that purely cosmetic difference cannot fail
+      # the run; the audit facts themselves are unaffected, as the comments are
+      # regenerated decor that cargo-vet never reads back.
+      - run: cargo vet fmt
+        working-directory: ${{ matrix.workspace }}
       - run: cargo vet --locked
+        working-directory: ${{ matrix.workspace }}
+      # `cargo vet fmt` above would also mask a hand-edited config.toml or
+      # imports.lock, so keep enforcing formatting on the per-workspace files.
+      # Only the shared audits.toml is exempt.
+      - name: Check per-workspace store files are formatted
+        run: git diff --exit-code -- supply-chain/config.toml supply-chain/imports.lock
         working-directory: ${{ matrix.workspace }}
 
   cargo-deny:

@@ -42,13 +42,13 @@ jsonrpsee = { version = "0.24", features = ["async-client"] }
 jsonrpsee-http-client = { version = "0.24", default-features = false }
 tokio = { version = "1", features = ["net", "rt-multi-thread"] }
 tower = { version = "0.4", features = ["timeout"] }
-transparent = { package = "zcash_transparent", version = "0.9.0" }
-zcash_client_backend = "0.24.0-rc.1"
-zcash_primitives = "0.29.0"
+transparent = { package = "zcash_transparent", version = "0.10.0" }
+zcash_client_backend = "0.24.0-rc.4"
+zcash_primitives = "0.30.0"
 zcash_protocol = "0.10.0"
 zebra-chain = "11"
-zebra-rpc = "11"
-zebra-state = { version = "10", features = ["indexer"] }
+zebra-rpc = "15"
+zebra-state = { version = "12", features = ["indexer"] }
 
 [dev-dependencies]
 abscissa_core = { version = "0.9", features = ["testing"] }
@@ -73,21 +73,6 @@ rpc-cli = ["zallet-core/rpc-cli"]
 
 ## `tokio-console` support.
 tokio-console = ["zallet-core/tokio-console"]
-
-[patch.crates-io]
-# Replace with the crates.io releases once they ship.
-equihash = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-f4jumble = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-zcash_address = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-zcash_client_backend = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-zcash_client_sqlite = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-zcash_encoding = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-zcash_keys = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-zcash_primitives = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-zcash_proofs = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-zcash_protocol = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-zcash_transparent = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
-zip321 = { git = "https://github.com/zcash/librustzcash.git", rev = "0531f9d89450d5def16d4c320972e4ce960f9175" }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
