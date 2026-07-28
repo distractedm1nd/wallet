@@ -6,7 +6,7 @@ authors = [
     "Kris Nuttycombe <kris@electriccoin.co>",
 ]
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 description = "A prototype wallet, using the Zaino chain indexer. Don't rely on this for privacy or with significant funds yet!"
 repository = "https://github.com/zcash/zallet"
 license = "MIT OR Apache-2.0"
@@ -72,6 +72,10 @@ once_cell = "1.2"
 tempfile = "3"
 
 [patch.crates-io]
+# Use libc++ when requested by the StageX musl builder. This upstream fix landed
+# after rocksdb 0.24.0 and can return to crates.io with the next release.
+librocksdb-sys = { git = "https://github.com/rust-rocksdb/rust-rocksdb.git", rev = "0442de85de82234643b5ba0a8f66a13ecf31b17d" }
+
 # TEMPORARY: pin the zaino crates to the zodl-inc/zaino branch
 # `update/librustzcash-0.24.0-rc.4`, which bumps zaino to the librustzcash
 # 0.30/0.10 cohort matching this workspace and surfaces the Ironwood (NU6.3)

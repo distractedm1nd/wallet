@@ -100,10 +100,10 @@ pub(crate) async fn call<C: Chain>(
         .chain_height()
         .map_err(|e| LegacyCode::Database.with_message(e.to_string()))?;
 
-    if let (Some(height), Some(tip)) = (start_height, chain_tip) {
-        if height > tip {
-            return Err(LegacyCode::InvalidParameter.with_static("Block height out of range."));
-        }
+    if let (Some(height), Some(tip)) = (start_height, chain_tip)
+        && height > tip
+    {
+        return Err(LegacyCode::InvalidParameter.with_static("Block height out of range."));
     }
 
     let hrp_fvk = wallet.params().hrp_sapling_extended_full_viewing_key();

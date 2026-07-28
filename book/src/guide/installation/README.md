@@ -90,7 +90,7 @@ Executable binaries are available for download on the [GitHub Releases page].
 
 To build Zallet from source, you will first need to install Rust and Cargo. Follow the
 instructions on the [Rust installation page]. Zallet currently requires at least Rust
-version 1.88.
+version 1.95.
 
 > WARNING: The following does not yet work because Zallet cannot be published to
 > [crates.io] while it has unpublished dependencies. This will be fixed before the 1.0.0
