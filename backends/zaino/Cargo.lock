@@ -6890,7 +6890,7 @@ dependencies = [
 
 [[package]]
 name = "zallet-core"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "abscissa_core",
  "abscissa_tokio",
@@ -6978,7 +6978,7 @@ dependencies = [
 
 [[package]]
 name = "zallet-zaino"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "abscissa_core",
  "futures",
