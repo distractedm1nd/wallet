@@ -114,6 +114,15 @@ requirement to all three manifests (root `Cargo.toml` plus
 `backends/{zebra,zaino}/Cargo.toml`), then run `utils/sync-lockfiles.sh` to
 reconcile the three lockfiles together (never hand-edit a single lockfile).
 
+`check-lockstep.sh` likewise requires the four shipped packages (`zallet`,
+`zallet-core`, `zallet-zebra`, `zallet-zaino`) to carry one identical version,
+which no single `cargo` invocation can bump because they span three workspaces.
+Use `utils/bump-version.sh <version>` rather than editing the manifests by hand:
+it also updates the artefacts that embed the version (the `as_of_version` trycmd
+goldens, the version-naming book prose, and the `[Unreleased]` changelog section,
+promoted to a heading dated `PLANNED` until the release ships) and then
+reconciles the lockfiles. Pass `--dry-run` to preview.
+
 Key external dependencies from the Zcash ecosystem:
 - `zcash_client_backend`, `zcash_client_sqlite` -- wallet backend logic and storage
 - `zcash_keys`, `zcash_primitives`, `zcash_proofs` -- protocol primitives
@@ -340,8 +349,69 @@ guarded against is on the failure path.
 
 ### CHANGELOG
 
-- When a commit alters the public API, fixes a bug, or changes underlying semantics, it MUST also modify the affected `CHANGELOG.md` to document the change. These modifications to `CHANGELOG.md` MUST follow the existing conventions in that file which are originally based on those documented at [Keep a Changelog](https://keepachangelog.com/).
+The repository has FOUR changelogs, one per audience, all following the
+conventions documented at [Keep a Changelog](https://keepachangelog.com/). See
+the Changelog Entries section of CONTRIBUTING.md for the full rationale.
+
+| File | Documents | Audience |
+| --- | --- | --- |
+| `CHANGELOG.md` | The `zallet` user interface | People who run Zallet and integrate against it |
+| `zallet-core/CHANGELOG.md` | The `zallet-core` public Rust API | People implementing a chain backend against it |
+| `backends/zebra/CHANGELOG.md` | The `zallet-zebra` binary | Operators running the Zebra read-state backend |
+| `backends/zaino/CHANGELOG.md` | The `zallet-zaino` binary | Operators running the Zaino indexer backend |
+
+The rules are:
+
+- Route an entry by **who needs to read it**, NOT by which crate the diff
+  touched. Most user-visible behaviour is implemented in `zallet-core`, but a
+  new JSON-RPC method or CLI flag belongs in the ROOT changelog; only changes to
+  `zallet-core`'s own Rust API (the `Chain` / `ChainView` seam and the types it
+  exchanges, or a dependency whose types appear in that API) go in its file. A
+  backend's file records what that backend requires of its chain source: the
+  `zebrad` or Zaino versions it builds against, the on-disk formats it reads,
+  and backend-specific configuration.
+- An entry is REQUIRED for any change to the root file's surface — the JSON-RPC
+  methods and their request and response shapes, the CLI commands, flags and
+  output, the configuration file options, the wallet database format and which
+  releases can open it, and the published release artifacts — and for any bug
+  fix or change to the semantics of existing behaviour, including changes that
+  leave every signature and field name untouched but alter what a caller can
+  expect: stricter validation, a different error code, a previously fixed value
+  becoming configurable. Privacy, security, and cost properties count as
+  user-facing even when they are documented only in code comments.
+- Entries **MUST NOT** describe implementation details, internal refactors,
+  test-fixture reworks, or contracts no audience can observe. Documentation-only
+  changes (book pages, rustdoc corrections) do not get entries. Before
+  dismissing a dependency bump as invisible, check all four audiences: one that
+  a wallet user cannot see may still force a backend implementor to upgrade in
+  lockstep, or change which `zebrad` an operator must run.
+- A change serving two audiences goes in both files, written differently for
+  each. Do NOT copy an entry verbatim between files.
+- The entry **MUST** be part of the same commit that makes the change, not a
+  separate "update changelog" commit at the end of a branch. If the code is
+  already committed, fold the entry in with `git revise` rather than appending
+  a follow-up commit.
+- An entry describes the difference between the **last released version** and
+  the state your change produces — never an interstitial state. An API added
+  under one name and renamed before release yields one entry naming the final
+  name; an API added and then removed again before release yields none. Update
+  an existing `## [Unreleased]` entry in place rather than adding a second
+  entry describing the delta from the first.
+- A released `## [x.y.z] - DATE` section is the historical record of what that
+  release shipped. Correct an entry there only if it was inaccurate as written;
+  never edit it to record something that happened afterwards. That belongs
+  under `## [Unreleased]`. This covers placement too: if an entry shipped in the
+  wrong file, add a correctly-placed one going forward rather than relocating
+  the published entry.
+- The `## [Unreleased]` heading is permanent: it stays at the top of every
+  changelog even when it is empty following a release.
+- All four packages ship in release lockstep under one version number, so every
+  release heading appears in every file. A component with no changes for its own
+  audience gets an empty section; that is expected, not an omission to fix.
 - Updated or added public API members MUST include complete `rustdoc` documentation comments.
+
+`utils/bump-version.sh` promotes the `## [Unreleased]` section in all four files
+at release time; do not hand-roll the promotion.
 
 ### Merge Workflow
 

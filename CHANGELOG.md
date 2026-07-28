@@ -1,12 +1,31 @@
-# Changelog
+# Zallet Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to the **`zallet` user interface** are documented in this
+file: the JSON-RPC methods, the command-line interface, the configuration file,
+the wallet database and which releases can open it, and the published release
+artifacts. It is written for the people who run Zallet and integrate against it,
+and it covers that surface no matter which crate implements it.
+
+Changes with a narrower audience are documented alongside the component they
+affect:
+
+- [`zallet-core/CHANGELOG.md`](zallet-core/CHANGELOG.md) — the Rust API shared by
+  the backend binaries, for anyone implementing a chain backend against it.
+- [`backends/zebra/CHANGELOG.md`](backends/zebra/CHANGELOG.md) — the
+  `zallet-zebra` binary, for operators running the Zebra read-state backend.
+- [`backends/zaino/CHANGELOG.md`](backends/zaino/CHANGELOG.md) — the
+  `zallet-zaino` binary, for operators running the Zaino indexer backend.
+
+All four packages move in release lockstep and share one version number, so the
+same release heading appears in each file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Prior to the 1.0.0 release, no Semantic Versioning is followed; all releases should
 be considered breaking changes.
 
 ## [Unreleased]
+
+## [0.1.0-beta.2] - 2026-07-28
 
 ### Added
 
@@ -15,7 +34,10 @@ be considered breaking changes.
     Sapling extended full viewing key for a Sapling address), it accepts
     unified addresses (returning the account's unified full viewing key), and
     an optional `ivk` argument that exports the account's unified incoming
-    viewing key instead.
+    viewing key instead. The `ivk` form is account-scoped even when `zaddr` is
+    a Sapling address: the returned UIVK grants incoming viewing capability for
+    every pool of the account holding that address, not just for Sapling, so it
+    discloses more than the Sapling address it was asked about.
   - `z_importviewingkey`. Imports a Sapling extended full viewing key into the
     wallet as a view-only account, enabling the wallet to track incoming and
     outgoing transactions for addresses derived from the key without holding
@@ -26,12 +48,6 @@ be considered breaking changes.
   integrators no longer need a `getrawtransaction` round-trip per UTXO to
   distinguish coinbase from spendable-to-transparent funds.
 
-### Removed
-
-- The `migrate-zcashd-wallet --buffer-wallet-transactions` flag has been removed.
-  All wallet transactions are now always imported directly, so the flag no longer
-  has any effect.
-
 ### Changed
 
 - `zallet rpc help` is now answered locally instead of being sent to the
@@ -39,28 +55,61 @@ be considered breaking changes.
   initialized wallet, or a running `zallet start`. The command argument may
   now be passed bare (`zallet rpc help getwalletinfo`) in addition to the
   JSON-quoted form.
+- The standalone release binaries are now published as one signed archive per
+  platform, `zallet-<version>-<arch>.tar.gz`, containing all three binaries
+  (`zallet`, `zallet-zebra`, `zallet-zaino`). Previously each binary was a
+  separate download with its own signature; verifying the archive now covers
+  all three.
+
+### Removed
+
+- The `migrate-zcashd-wallet --buffer-wallet-transactions` flag has been removed.
+  All wallet transactions are now always imported directly, so the flag no longer
+  has any effect.
 
 ### Fixed
 
+- `migrate-zcashd-wallet` no longer exhausts the transparent change gap limit.
+  Every key in the `zcashd` keypool, including pre-generated reserve keys that
+  were never handed out, was imported as an address exposed at the account
+  birthday height. The gap-limit window only advances past addresses that have a
+  mined first use, so on a wallet with meaningful transparent history the
+  internal (change) window stayed pinned near index 0 and every `z_sendmany`
+  needing transparent change failed permanently with `The address at index N
+  could not be safely reserved`. Addresses with no recorded exposure height are
+  now imported unexposed. A wallet already migrated with 0.1.0-beta.1 still
+  carries the records that caused this, and must be re-migrated from the
+  `zcashd` wallet.
+- `migrate-zcashd-wallet` now imports all of the wallet's transactions directly,
+  instead of relying on the post-import chain scan to recover them. The scan can
+  only re-derive transactions from the main-chain blocks it scans, so any
+  transaction that was never mined (for example a send that had not yet been
+  mined) or was recorded only against a non-main-chain block (a conflicted or
+  reorged transaction) was previously lost. These are now preserved.
 - `z_listunspent` now applies both confirmation bounds to every pool. Shielded
   notes whose transaction is not mined in the main chain (which can occur when a
   reorg un-mines a previously scanned transaction) were reported at every
   `minconf`, and `maxconf` was never applied to transparent outputs at all. An
   output of an unmined transaction is now reported only for `minconf = 0`, and
   both bounds remain inclusive.
-- Async RPC operations whose task panics are now marked as failed, with the
-  panic message reported via `z_getoperationstatus` and `z_getoperationresult`.
-  Previously such operations remained in the `executing` state forever and
-  could not be pruned.
 - `z_getbalances` now reports the documented transparent balance split:
   `regular` contains only non-coinbase funds and `coinbase` is populated with
   coinbase funds (immature coinbase is reported as `pending` rather than
   spendable). Previously `regular` silently included coinbase value and
-  `coinbase` was never present.
-- `z_getbalances` account `total` now includes transparent value in its
-  `spendable` and `pending` buckets. Previously only the shielded pools
-  contributed, so a wallet holding only transparent funds reported a zero
-  spendable total.
+  `coinbase` was never present. The account `total` now also includes
+  transparent value in its `spendable` and `pending` buckets; previously only
+  the shielded pools contributed, so a wallet holding only transparent funds
+  reported a zero spendable total.
+- Async RPC operations whose task panics are now marked as failed, with the
+  panic message reported via `z_getoperationstatus` and `z_getoperationresult`.
+  Previously such operations remained in the `executing` state forever and
+  could not be pruned. An operation whose result cannot be serialized to JSON
+  now fails in the same way, reporting a serialization error, rather than
+  panicking the task.
+- `walletpassphrase` now rejects an unlock `timeout` large enough to overflow
+  the absolute re-lock deadline, returning an invalid-parameter error instead of
+  failing with an internal error. Timeouts that do not overflow are still
+  honoured exactly and remain uncapped.
 - `z_sendmany` and `z_shieldcoinbase` now verify, after building a transaction
   and before broadcasting it, that every transparent output either exactly
   matches a requested payment or has an address that re-derives from the
@@ -80,19 +129,18 @@ be considered breaking changes.
   encrypted seed under an existing fingerprint (age recipients are public) and
   subsequent account derivation would silently use the substituted material.
   Such a mismatch is now reported as wallet database corruption or tampering.
+- Native age identity secret keys are now overwritten in memory when the cached
+  identities are dropped, so `walletlock` and the automatic re-lock no longer
+  leave the identity secrets recoverable from process memory.
 - `z_importkey` now writes the imported account and its encrypted spending key
   in a single database transaction. A failure partway through the import can no
   longer leave the spending key stored (and exportable via `z_exportkey`) while
   the wallet has no account to scan for it.
-- `migrate-zcashd-wallet` now imports all of the wallet's transactions directly,
-  instead of relying on the post-import chain scan to recover them. The scan can
-  only re-derive transactions from the main-chain blocks it scans, so any
-  transaction that was never mined (for example a send that had not yet been
-  mined) or was recorded only against a non-main-chain block (a conflicted or
-  reorged transaction) was previously lost. These are now preserved.
-
-### Fixed
-
+- Wallet encryption initialization now writes the age recipient set in a single
+  database transaction. A failure partway through (disk full, I/O error, crash)
+  could previously commit a partial recipient set, after which the one-shot
+  emptiness guard refused every retry, leaving initialization permanently
+  wedged with key material encrypted to an incomplete set of recipients.
 - A failure to service a single transaction data request (for example when the
   requested transaction was reorged away and the validator answers
   `RPC -5: No such mempool or main chain transaction`) no longer shuts the
@@ -109,6 +157,10 @@ be considered breaking changes.
   scan ranges are now clamped to the current chain tip; a range with nothing
   scannable defers to the steady-state sync task, which waits for chain tip
   changes.
+- The published `linux/arm64` container image now contains the `zallet-zebra`
+  and `zallet-zaino` backend binaries. The 0.1.0-beta.1 arm64 image shipped
+  only the launcher, so every command failed with `failed to run the backend
+  binary`. The `linux/amd64` image was unaffected.
 
 ## [0.1.0-beta.1] - 2026-07-12
 
