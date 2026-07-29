@@ -67,6 +67,142 @@ REMINDER: It is recommended that you back up your wallet files regularly. If you
 have not imported externally-produced keys, it only necessary to have backed up
 the wallet's key storage file.
 
+## `pczt_combine`
+
+Combines multiple PCZTs (for the same transaction) into one.
+
+This applies the Combiner role, merging the per-party contributions
+(proofs and signatures produced in parallel) into a single PCZT.
+
+#### Arguments
+- `pczts` (array, required) The base64-encoded PCZTs to combine.
+
+## `pczt_create`
+
+*Only available in wallet builds of Zallet.*
+
+Creates a PCZT from a transaction proposal.
+
+Selects inputs and computes change for the given recipients, producing a
+complete (but unproven and unsigned) PCZT. This is the PCZT-based
+replacement for `createrawtransaction` and `fundrawtransaction`.
+
+The result reports the minimum privacy policy the transaction requires,
+which `pczt_sign` will ask the caller to acknowledge. To see what a
+transaction would reveal before committing to it, create it with the
+`NoPrivacy` policy and inspect the reported requirement.
+
+A PCZT holds a single transaction, so payments that take more than one
+are not supported: a ZIP 320 (TEX) recipient must be paid with
+`z_sendmany`, which performs both steps.
+
+#### Arguments
+- `from` (string, required) The address, or the account UUID, to send
+  funds from. An address source spends shielded funds (or, for a
+  transparent address, only that address's UTXOs); an account source
+  spends the funds named by `fund_source`.
+- `amounts` (array, required) An array of recipient amounts with fields:
+  - `address` (string, required) Recipient address.
+  - `amount` (numeric, required) Amount in ZEC.
+  - `memo` (string, optional) Optional memo for shielded recipients.
+- `minconf` (numeric, optional) Minimum confirmations for inputs.
+- `privacy_policy` (string, optional, default=`"FullPrivacy"`) The most
+  the transaction is permitted to reveal, using the same values as
+  `z_sendmany`: `"FullPrivacy"`, `"AllowRevealedAmounts"`,
+  `"AllowRevealedRecipients"`, `"AllowRevealedSenders"`,
+  `"AllowFullyTransparent"`, `"AllowLinkingAccountAddresses"`, or
+  `"NoPrivacy"` (see `z_sendmany` for what each permits). A proposal
+  that would reveal more than this is rejected; the minimum it actually
+  requires is reported back as `privacy_policy`.
+- `fund_source` (string or array, optional) Where funds may be drawn
+  from, when `from` is an account UUID: `"orchard"`, `"sapling"`,
+  `"any_transparent"`, or an array of transparent address strings.
+  Defaults to any shielded pool. Each source is isolating: a source that
+  cannot cover the payment fails rather than drawing on other funds.
+
+## `pczt_extract`
+
+*Only available in wallet builds of Zallet.*
+
+Extracts the final, network-ready transaction from a completed PCZT.
+
+Finalizes the transparent spends and verifies the shielded proofs and
+signatures before returning the hex-encoded transaction. Fails if the
+PCZT is not fully proven and signed. Transparent script signatures are
+not executed here; an invalid one surfaces at broadcast.
+
+If this wallet created the PCZT, the transaction is also recorded in the
+wallet database so its inputs are tracked as pending-spent.
+
+#### Arguments
+- `pczt` (string, required) The base64-encoded PCZT to extract from.
+
+## `pczt_inspect`
+
+Decodes a PCZT and describes what it commits to.
+
+Reports the transaction's transparent inputs and outputs, its shielded
+bundles (with the recipient and value data its creator recorded), the
+implied fee, the privacy policy recorded by `pczt_create`, and the
+proof/signature status of each bundle. Use this to review a PCZT before
+signing it — particularly one that has passed through other parties.
+
+Everything reported is read from the PCZT as recorded by its creator;
+nothing is cryptographically verified until `pczt_extract`. Shielded
+output details are creator-side metadata and may have been redacted.
+
+#### Arguments
+- `pczt` (string, required) The base64-encoded PCZT to inspect.
+
+## `pczt_prove`
+
+Adds the zero-knowledge proofs required by a PCZT.
+
+Creates the Sapling, Orchard, and/or Ironwood proofs for the PCZT's
+shielded components. This must be done before the transaction can be
+extracted.
+
+The first call for each circuit version generates and caches the proving
+key, which can take tens of seconds and may exceed the RPC timeout; the
+work completes in the background and a retry reuses the cached key. When
+the RPC server starts, the keys for the current consensus branch are
+warmed in the background, so in steady state this cost is paid before
+the first call arrives.
+
+#### Arguments
+- `pczt` (string, required) The base64-encoded PCZT to add proofs to.
+
+## `pczt_sign`
+
+*Only available in wallet builds of Zallet.*
+
+Signs a PCZT with the wallet's keys.
+
+Signs every input the wallet holds keys for. Inputs belonging to other
+keys are left unsigned and reported, unless `strict` is set.
+
+Signing commits to what the transaction reveals, so the caller must
+acknowledge the privacy policy recorded in the PCZT by `pczt_create`;
+omitting `privacy_policy` acknowledges only `FullPrivacy` and refuses to
+sign anything that reveals more.
+
+> ⚠️ A PCZT that this wallet did not create — or that passed through
+> other parties on its way back — carries no recorded policy Zallet can
+> trust. Review what you are about to sign with `pczt_inspect`: a
+> counterparty could have altered the outputs, amounts, or recorded
+> policy of the PCZT.
+
+#### Arguments
+- `pczt` (string, required) The base64-encoded PCZT to sign.
+- `privacy_policy` (string, optional, default=`"FullPrivacy"`) Policy
+  acknowledging what information the transaction may reveal, using the
+  same values as `z_sendmany`: `"FullPrivacy"`,
+  `"AllowRevealedAmounts"`, `"AllowRevealedRecipients"`,
+  `"AllowRevealedSenders"`, `"AllowFullyTransparent"`,
+  `"AllowLinkingAccountAddresses"`, or `"NoPrivacy"`. Must be at least
+  as permissive as the policy reported by `pczt_create`.
+- `strict` (bool, optional) If true, fail if any inputs cannot be signed.
+
 ## `rpc.discover`
 
 *Only available in wallet builds of Zallet.*

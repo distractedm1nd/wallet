@@ -47,6 +47,29 @@ be considered breaking changes.
   indicating coinbase origin (mirroring `zcashd`'s `listunspent`), so
   integrators no longer need a `getrawtransaction` round-trip per UTXO to
   distinguish coinbase from spendable-to-transparent funds.
+- JSON-RPC methods for working with PCZTs (Partially Created Zcash
+  Transactions), the robust replacements for `createrawtransaction`,
+  `fundrawtransaction`, and `signrawtransaction`. A transaction is assembled by
+  threading a PCZT through these roles:
+  - `pczt_create` — build a PCZT from a payment request (select inputs and
+    compute change), drawing on an address's funds or on the funds of an
+    account named by an isolating `fund_source`; the replacement for
+    `createrawtransaction` + `fundrawtransaction`. Reports (and records in the
+    PCZT) the minimum privacy policy the transaction requires. A ZIP 320 (TEX)
+    recipient is rejected: paying one takes two transactions, and a PCZT holds
+    only one, so use `z_sendmany` for those.
+  - `pczt_combine` — merge the contributions of several parties into one PCZT.
+  - `pczt_inspect` — decode a PCZT and describe what it commits to (inputs,
+    outputs, fee, recorded privacy policy, proof/signature status), for
+    reviewing a PCZT before signing it.
+  - `pczt_prove` — add the Sapling, Orchard, and/or Ironwood zero-knowledge
+    proofs. The proving keys for the current consensus branch are warmed in
+    the background when the RPC server starts.
+  - `pczt_sign` — add signatures using the wallet's keys, once the caller
+    acknowledges the privacy policy recorded in the PCZT.
+  - `pczt_extract` — verify the PCZT and extract the final, network-ready
+    transaction, additionally recording it in the wallet (marking its inputs
+    pending-spent) when the PCZT was created by this wallet.
 
 ### Changed
 

@@ -119,6 +119,15 @@ zcash_protocol = "0.10.0"
 
 # Zcash payment protocols
 orchard = "0.15.0"
+pczt = { version = "0.9.1", features = [
+    "orchard",
+    "sapling",
+    "transparent",
+    "prover",
+    "signer",
+    "spend-finalizer",
+    "tx-extractor",
+] }
 sapling = { package = "sapling-crypto", version = "0.7" }
 transparent = { package = "zcash_transparent", version = "0.10.0" }
 zcash_encoding = "0.4"
