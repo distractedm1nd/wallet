@@ -1404,6 +1404,7 @@ impl<C: Chain> WalletRpcServer for WalletRpcImpl<C> {
         privacy_policy: Option<String>,
         fund_source: Option<JsonValue>,
     ) -> pczt_create::Response {
+        self.general.ensure_synced()?;
         pczt_create::call(
             self.wallet().await?,
             from,
@@ -1432,6 +1433,7 @@ impl<C: Chain> WalletRpcServer for WalletRpcImpl<C> {
     }
 
     async fn pczt_extract(&self, pczt: &str) -> pczt_extract::Response {
+        self.general.ensure_synced()?;
         pczt_extract::call(self.wallet().await?, pczt).await
     }
 }
