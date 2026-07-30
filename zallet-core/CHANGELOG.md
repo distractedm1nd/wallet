@@ -21,6 +21,15 @@ should be considered breaking changes.
 
 ## [Unreleased]
 
+### Changed
+
+- Migrated to `zcash_client_backend`/`zcash_client_sqlite` 0.24.0-rc.5 /
+  0.22.0-rc.5, which extract output-locking (`lock_outputs`, `unlock_output`,
+  `clear_locked_outputs`, `get_locked_outputs`) off `WalletWrite` into a new
+  `OutputLockStore` supertrait. Internal `DbConnection` now implements
+  `OutputLockStore` directly, alongside its existing `WalletRead`,
+  `InputSource`, `WalletWrite`, and `WalletCommitmentTrees` impls.
+
 ## [0.1.0-beta.2] - 2026-07-28
 
 ### Changed

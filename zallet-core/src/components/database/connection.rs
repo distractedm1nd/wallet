@@ -11,9 +11,9 @@ use zcash_client_backend::{
     address::UnifiedAddress,
     data_api::{
         AccountBirthday, AccountMeta, AddressInfo, Balance, CoinbaseFilter, DecryptedTransaction,
-        InputSource, NoteFilter, ORCHARD_SHARD_HEIGHT, ReceivedNotes, ReceivedTransactionOutput,
-        SAPLING_SHARD_HEIGHT, TargetValue, TransparentKeyOrigin, WalletCommitmentTrees, WalletRead,
-        WalletWrite, Zip32Derivation,
+        InputSource, NoteFilter, ORCHARD_SHARD_HEIGHT, OutputLockStore, ReceivedNotes,
+        ReceivedTransactionOutput, SAPLING_SHARD_HEIGHT, TargetValue, TransparentKeyOrigin,
+        WalletCommitmentTrees, WalletRead, WalletWrite, Zip32Derivation,
         chain::ChainState,
         error::{FindAccountForAddressError, LockError, RewindError},
         scanning::ScanPriority,
@@ -571,7 +571,8 @@ impl WalletWrite for DbConnection {
         seed: &SecretVec<u8>,
         birthday: &AccountBirthday,
         key_source: Option<&str>,
-    ) -> Result<(Self::AccountId, UnifiedSpendingKey), Self::Error> {
+    ) -> Result<(<Self as WalletRead>::AccountId, UnifiedSpendingKey), <Self as WalletRead>::Error>
+    {
         self.with_mut(|mut db_data| {
             db_data.create_account(account_name, seed, birthday, key_source)
         })
@@ -584,7 +585,7 @@ impl WalletWrite for DbConnection {
         account_index: zip32::AccountId,
         birthday: &AccountBirthday,
         key_source: Option<&str>,
-    ) -> Result<(Self::Account, UnifiedSpendingKey), Self::Error> {
+    ) -> Result<(Self::Account, UnifiedSpendingKey), <Self as WalletRead>::Error> {
         self.with_mut(|mut db_data| {
             db_data.import_account_hd(account_name, seed, account_index, birthday, key_source)
         })
@@ -597,62 +598,68 @@ impl WalletWrite for DbConnection {
         birthday: &AccountBirthday,
         purpose: zcash_client_backend::data_api::AccountPurpose,
         key_source: Option<&str>,
-    ) -> Result<Self::Account, Self::Error> {
+    ) -> Result<Self::Account, <Self as WalletRead>::Error> {
         self.with_mut(|mut db_data| {
             db_data.import_account_ufvk(account_name, unified_key, birthday, purpose, key_source)
         })
     }
 
-    fn delete_account(&mut self, account: Self::AccountId) -> Result<(), Self::Error> {
+    fn delete_account(
+        &mut self,
+        account: <Self as WalletRead>::AccountId,
+    ) -> Result<(), <Self as WalletRead>::Error> {
         self.with_mut(|mut db_data| db_data.delete_account(account))
     }
 
     #[cfg(feature = "transparent-key-import")]
     fn import_standalone_transparent_pubkey(
         &mut self,
-        account: Self::AccountId,
+        account: <Self as WalletRead>::AccountId,
         pubkey: secp256k1::PublicKey,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<(), <Self as WalletRead>::Error> {
         self.with_mut(|mut db_data| db_data.import_standalone_transparent_pubkey(account, pubkey))
     }
 
     #[cfg(feature = "transparent-key-import")]
     fn import_standalone_transparent_script(
         &mut self,
-        account: Self::AccountId,
+        account: <Self as WalletRead>::AccountId,
         script: zcash_script::script::Redeem,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<(), <Self as WalletRead>::Error> {
         self.with_mut(|mut db_data| db_data.import_standalone_transparent_script(account, script))
     }
 
     fn get_next_available_address(
         &mut self,
-        account: Self::AccountId,
+        account: <Self as WalletRead>::AccountId,
         request: UnifiedAddressRequest,
-    ) -> Result<Option<(UnifiedAddress, DiversifierIndex)>, Self::Error> {
+    ) -> Result<Option<(UnifiedAddress, DiversifierIndex)>, <Self as WalletRead>::Error> {
         self.with_mut(|mut db_data| db_data.get_next_available_address(account, request))
     }
 
     fn get_address_for_index(
         &mut self,
-        account: Self::AccountId,
+        account: <Self as WalletRead>::AccountId,
         diversifier_index: DiversifierIndex,
         request: UnifiedAddressRequest,
-    ) -> Result<Option<UnifiedAddress>, Self::Error> {
+    ) -> Result<Option<UnifiedAddress>, <Self as WalletRead>::Error> {
         self.with_mut(|mut db_data| {
             db_data.get_address_for_index(account, diversifier_index, request)
         })
     }
 
-    fn update_chain_tip(&mut self, tip_height: BlockHeight) -> Result<(), Self::Error> {
+    fn update_chain_tip(
+        &mut self,
+        tip_height: BlockHeight,
+    ) -> Result<(), <Self as WalletRead>::Error> {
         self.with_mut(|mut db_data| db_data.update_chain_tip(tip_height))
     }
 
     fn put_blocks(
         &mut self,
         from_state: &ChainState,
-        blocks: Vec<zcash_client_backend::data_api::ScannedBlock<Self::AccountId>>,
-    ) -> Result<(), Self::Error> {
+        blocks: Vec<zcash_client_backend::data_api::ScannedBlock<<Self as WalletRead>::AccountId>>,
+    ) -> Result<(), <Self as WalletRead>::Error> {
         self.with_mut(|mut db_data| db_data.put_blocks(from_state, blocks))
     }
 
@@ -660,9 +667,129 @@ impl WalletWrite for DbConnection {
         &mut self,
         height: BlockHeight,
         retain_with_priority: Option<ScanPriority>,
-    ) -> Result<u64, Self::Error> {
+    ) -> Result<u64, <Self as WalletRead>::Error> {
         self.with_mut(|mut db_data| db_data.prune_scan_queue_below(height, retain_with_priority))
     }
+
+    fn put_received_transparent_utxo(
+        &mut self,
+        output: &WalletTransparentOutput<<Self as WalletRead>::AccountId>,
+    ) -> Result<Self::UtxoRef, <Self as WalletRead>::Error> {
+        self.with_mut(|mut db_data| db_data.put_received_transparent_utxo(output))
+    }
+
+    fn store_decrypted_tx(
+        &mut self,
+        received_tx: DecryptedTransaction<'_, Transaction, <Self as WalletRead>::AccountId>,
+    ) -> Result<(), <Self as WalletRead>::Error> {
+        self.with_mut(|mut db_data| db_data.store_decrypted_tx(received_tx))
+    }
+
+    fn set_tx_trust(
+        &mut self,
+        txid: zcash_protocol::TxId,
+        trusted: bool,
+    ) -> Result<(), <Self as WalletRead>::Error> {
+        self.with_mut(|mut db_data| db_data.set_tx_trust(txid, trusted))
+    }
+
+    fn store_transactions_to_be_sent(
+        &mut self,
+        transactions: &[zcash_client_backend::data_api::SentTransaction<
+            '_,
+            <Self as WalletRead>::AccountId,
+        >],
+    ) -> Result<(), <Self as WalletRead>::Error> {
+        self.with_mut(|mut db_data| db_data.store_transactions_to_be_sent(transactions))
+    }
+
+    fn truncate_to_height(
+        &mut self,
+        max_height: BlockHeight,
+    ) -> Result<BlockHeight, <Self as WalletRead>::Error> {
+        self.with_mut(|mut db_data| db_data.truncate_to_height(max_height))
+    }
+
+    fn truncate_to_chain_state(
+        &mut self,
+        chain_state: ChainState,
+    ) -> Result<(), <Self as WalletRead>::Error> {
+        self.with_mut(|mut db_data| db_data.truncate_to_chain_state(chain_state))
+    }
+
+    fn rewind_to_chain_state(
+        &mut self,
+        chain_state: ChainState,
+        reset_account_birthdays: HashSet<<Self as WalletRead>::AccountId>,
+    ) -> Result<(), RewindError<<Self as WalletRead>::AccountId, <Self as WalletRead>::Error>> {
+        self.with_mut(|mut db_data| {
+            db_data.rewind_to_chain_state(chain_state, reset_account_birthdays)
+        })
+    }
+
+    fn reserve_next_n_ephemeral_addresses(
+        &mut self,
+        account_id: <Self as WalletRead>::AccountId,
+        n: usize,
+    ) -> Result<Vec<(TransparentAddress, TransparentAddressMetadata)>, <Self as WalletRead>::Error>
+    {
+        self.with_mut(|mut db_data| db_data.reserve_next_n_ephemeral_addresses(account_id, n))
+    }
+
+    fn reserve_next_n_internal_addresses(
+        &mut self,
+        account_id: <Self as WalletRead>::AccountId,
+        n: usize,
+    ) -> Result<Vec<(TransparentAddress, TransparentAddressMetadata)>, <Self as WalletRead>::Error>
+    {
+        self.with_mut(|mut db_data| db_data.reserve_next_n_internal_addresses(account_id, n))
+    }
+
+    fn set_transaction_status(
+        &mut self,
+        txid: zcash_protocol::TxId,
+        status: zcash_client_backend::data_api::TransactionStatus,
+    ) -> Result<(), <Self as WalletRead>::Error> {
+        self.with_mut(|mut db_data| db_data.set_transaction_status(txid, status))
+    }
+
+    fn schedule_next_check(
+        &mut self,
+        address: &TransparentAddress,
+        offset_seconds: u32,
+    ) -> Result<Option<SystemTime>, <Self as WalletRead>::Error> {
+        self.with_mut(|mut db_data| db_data.schedule_next_check(address, offset_seconds))
+    }
+
+    fn notify_address_checked(
+        &mut self,
+        request: zcash_client_backend::data_api::TransactionsInvolvingAddress,
+        as_of_height: BlockHeight,
+    ) -> Result<(), <Self as WalletRead>::Error> {
+        self.with_mut(|mut db_data| db_data.notify_address_checked(request, as_of_height))
+    }
+
+    #[cfg(feature = "spend-index")]
+    fn notify_output_verified_unspent(
+        &mut self,
+        outpoint: OutPoint,
+        as_of_height: BlockHeight,
+    ) -> Result<(), <Self as WalletRead>::Error> {
+        self.with_mut(|mut db_data| db_data.notify_output_verified_unspent(outpoint, as_of_height))
+    }
+
+    fn mark_transparent_addresses_exposed(
+        &mut self,
+        exposures: &[(TransparentAddress, BlockHeight)],
+    ) -> Result<(), <Self as WalletRead>::Error> {
+        self.with_mut(|mut db_data| db_data.mark_transparent_addresses_exposed(exposures))
+    }
+}
+
+impl OutputLockStore for DbConnection {
+    type Error = <WalletDb<rusqlite::Connection, Network, SystemClock, OsRng> as WalletRead>::Error;
+    type AccountId =
+        <WalletDb<rusqlite::Connection, Network, SystemClock, OsRng> as WalletRead>::AccountId;
 
     fn lock_outputs(
         &mut self,
@@ -681,107 +808,8 @@ impl WalletWrite for DbConnection {
         self.with_mut(|mut db_data| db_data.clear_locked_outputs(account))
     }
 
-    fn put_received_transparent_utxo(
-        &mut self,
-        output: &WalletTransparentOutput<Self::AccountId>,
-    ) -> Result<Self::UtxoRef, Self::Error> {
-        self.with_mut(|mut db_data| db_data.put_received_transparent_utxo(output))
-    }
-
-    fn store_decrypted_tx(
-        &mut self,
-        received_tx: DecryptedTransaction<'_, Transaction, Self::AccountId>,
-    ) -> Result<(), Self::Error> {
-        self.with_mut(|mut db_data| db_data.store_decrypted_tx(received_tx))
-    }
-
-    fn set_tx_trust(
-        &mut self,
-        txid: zcash_protocol::TxId,
-        trusted: bool,
-    ) -> Result<(), Self::Error> {
-        self.with_mut(|mut db_data| db_data.set_tx_trust(txid, trusted))
-    }
-
-    fn store_transactions_to_be_sent(
-        &mut self,
-        transactions: &[zcash_client_backend::data_api::SentTransaction<'_, Self::AccountId>],
-    ) -> Result<(), Self::Error> {
-        self.with_mut(|mut db_data| db_data.store_transactions_to_be_sent(transactions))
-    }
-
-    fn truncate_to_height(&mut self, max_height: BlockHeight) -> Result<BlockHeight, Self::Error> {
-        self.with_mut(|mut db_data| db_data.truncate_to_height(max_height))
-    }
-
-    fn truncate_to_chain_state(&mut self, chain_state: ChainState) -> Result<(), Self::Error> {
-        self.with_mut(|mut db_data| db_data.truncate_to_chain_state(chain_state))
-    }
-
-    fn rewind_to_chain_state(
-        &mut self,
-        chain_state: ChainState,
-        reset_account_birthdays: HashSet<Self::AccountId>,
-    ) -> Result<(), RewindError<Self::AccountId, Self::Error>> {
-        self.with_mut(|mut db_data| {
-            db_data.rewind_to_chain_state(chain_state, reset_account_birthdays)
-        })
-    }
-
-    fn reserve_next_n_ephemeral_addresses(
-        &mut self,
-        account_id: Self::AccountId,
-        n: usize,
-    ) -> Result<Vec<(TransparentAddress, TransparentAddressMetadata)>, Self::Error> {
-        self.with_mut(|mut db_data| db_data.reserve_next_n_ephemeral_addresses(account_id, n))
-    }
-
-    fn reserve_next_n_internal_addresses(
-        &mut self,
-        account_id: Self::AccountId,
-        n: usize,
-    ) -> Result<Vec<(TransparentAddress, TransparentAddressMetadata)>, Self::Error> {
-        self.with_mut(|mut db_data| db_data.reserve_next_n_internal_addresses(account_id, n))
-    }
-
-    fn set_transaction_status(
-        &mut self,
-        txid: zcash_protocol::TxId,
-        status: zcash_client_backend::data_api::TransactionStatus,
-    ) -> Result<(), Self::Error> {
-        self.with_mut(|mut db_data| db_data.set_transaction_status(txid, status))
-    }
-
-    fn schedule_next_check(
-        &mut self,
-        address: &TransparentAddress,
-        offset_seconds: u32,
-    ) -> Result<Option<SystemTime>, Self::Error> {
-        self.with_mut(|mut db_data| db_data.schedule_next_check(address, offset_seconds))
-    }
-
-    fn notify_address_checked(
-        &mut self,
-        request: zcash_client_backend::data_api::TransactionsInvolvingAddress,
-        as_of_height: BlockHeight,
-    ) -> Result<(), Self::Error> {
-        self.with_mut(|mut db_data| db_data.notify_address_checked(request, as_of_height))
-    }
-
-    #[cfg(feature = "spend-index")]
-    fn notify_output_verified_unspent(
-        &mut self,
-        outpoint: OutPoint,
-        as_of_height: BlockHeight,
-    ) -> Result<(), Self::Error> {
-        self.with_mut(|mut db_data| db_data.notify_output_verified_unspent(outpoint, as_of_height))
-    }
-
-    fn mark_transparent_addresses_exposed(
-        &mut self,
-        exposures: &[(TransparentAddress, BlockHeight)],
-    ) -> Result<(), Self::Error> {
-        self.with_mut(|mut db_data| db_data.mark_transparent_addresses_exposed(exposures))
+    fn get_locked_outputs(&self, account: Self::AccountId) -> Result<Vec<OutputRef>, Self::Error> {
+        self.with_mut(|db_data| db_data.get_locked_outputs(account))
     }
 }
 
