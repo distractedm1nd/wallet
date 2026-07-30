@@ -1344,13 +1344,13 @@ impl<C: Chain> WalletRpcServer for WalletRpcImpl<C> {
         fee: Option<JsonValue>,
         privacy_policy: Option<String>,
     ) -> z_send_many::Response {
+        self.general.ensure_synced()?;
         Ok(self
             .start_async(
                 z_send_many::call(
                     self.wallet().await?,
                     self.keystore.clone(),
                     self.chain().await?,
-                    self.general.sync_status.clone(),
                     fromaddress,
                     amounts,
                     minconf,
@@ -1371,11 +1371,11 @@ impl<C: Chain> WalletRpcServer for WalletRpcImpl<C> {
         memo: Option<String>,
         privacy_policy: Option<String>,
     ) -> z_shieldcoinbase::Response {
+        self.general.ensure_synced()?;
         let (preflight, context, fut) = z_shieldcoinbase::call(
             self.wallet().await?,
             self.keystore.clone(),
             self.chain().await?,
-            self.general.sync_status.clone(),
             fromaddress,
             toaddress,
             fee,

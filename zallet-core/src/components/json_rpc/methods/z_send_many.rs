@@ -37,7 +37,6 @@ use crate::{
             server::LegacyCode,
         },
         keystore::KeyStore,
-        sync::SyncStatusReader,
     },
     fl,
 };
@@ -85,7 +84,6 @@ pub(crate) async fn call<C: Chain>(
     mut wallet: DbHandle,
     keystore: KeyStore,
     chain: C,
-    sync_status: SyncStatusReader,
     fromaddress: String,
     amounts: Vec<AmountParameter>,
     minconf: Option<u32>,
@@ -143,13 +141,6 @@ pub(crate) async fn call<C: Chain>(
         confirmations_policy,
         &spend_policy,
     )?;
-
-    // The proposal has been built and validated. Before fetching key material and handing
-    // off the execution future, refuse the spend if the wallet is not synced enough to
-    // trust its view of the chain. This check is synchronous — it runs during the
-    // `call().await` in the dispatch layer, before the async operation is queued — so the
-    // caller sees the failure immediately rather than as a failed background operation.
-    sync_status.ensure_available()?;
 
     let derivation = account.source().key_derivation().ok_or_else(|| {
         LegacyCode::InvalidAddressOrKey.with_message(fl!("err-from-address-no-payment-source"))
