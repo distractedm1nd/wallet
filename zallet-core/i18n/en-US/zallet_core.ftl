@@ -425,6 +425,11 @@ err-ux-C = {"                    "}
 
 ## Limit errors
 
+err-excess-recipients =
+    Sending to {$count} recipients would exceed the current limit of {$limit}
+    actions, which exists to prevent memory exhaustion, because every recipient
+    needs at least one output. Restart with '{$config}' where {$bound} to allow
+    the wallet to attempt to construct this transaction.
 err-excess-shielded-actions =
     Including {$count} {$pool} {$kind} would exceed the current limit of
     {$limit} actions, which exists to prevent memory exhaustion. Restart with

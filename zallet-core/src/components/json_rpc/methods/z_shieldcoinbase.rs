@@ -30,9 +30,9 @@ use zcash_keys::{
     keys::{UnifiedFullViewingKey, UnifiedSpendingKey},
 };
 use zcash_proofs::prover::LocalTxProver;
-use zcash_protocol::value::Zatoshis;
+use zcash_protocol::{PoolType, value::Zatoshis};
 
-use crate::components::json_rpc::payments::enforce_privacy_policy;
+use crate::components::json_rpc::payments::{check_shielded_action_limits, enforce_privacy_policy};
 use crate::{
     components::{
         chain::Chain,
@@ -45,6 +45,7 @@ use crate::{
         },
         keystore::KeyStore,
     },
+    fl,
     prelude::*,
 };
 
@@ -237,6 +238,24 @@ pub(crate) async fn call<C: Chain>(
     // parsed above bounds which of these leakages the caller is willing to accept;
     // `enforce_privacy_policy` rejects the proposal if it requires more than the caller permitted.
     enforce_privacy_policy(&proposal, privacy_policy)?;
+
+    // Bound the transaction the same way `z_sendmany` does. Shielding a large coinbase
+    // UTXO set is exactly the case that produces an oversized transaction: without
+    // `limit`, the proposal takes every eligible UTXO, and this method's own
+    // documentation warns that the result can exceed transaction-size limits. Rejecting
+    // it here costs one proposal, versus proving a transaction that cannot be built.
+    let actions_limit = APP.config().builder.limits.orchard_actions().into();
+    check_shielded_action_limits(&proposal, actions_limit).map_err(|e| {
+        LegacyCode::Misc.with_message(fl!(
+            "err-excess-shielded-actions",
+            pool = PoolType::Shielded(e.pool).to_string(),
+            count = e.count,
+            kind = e.kind,
+            limit = actions_limit,
+            config = "-orchardactionlimit=N",
+            bound = format!("N >= %u"),
+        ))
+    })?;
 
     // Pre-flight numerics. We compute `remaining_*` by enumerating all eligible coinbase UTXOs
     // (`total_*`) and subtracting the ones the proposal selected (`shielding_*`). The
