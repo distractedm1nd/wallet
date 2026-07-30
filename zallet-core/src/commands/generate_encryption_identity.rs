@@ -47,8 +47,18 @@ impl AsyncRunnable for GenerateEncryptionIdentityCmd {
         if let Some(path) = output_path {
             // Ensure the parent directory exists; `generate-encryption-identity`
             // is typically the first command run against a fresh data directory.
+            //
+            // Directories created here hold the encryption identity, and for the default
+            // layout later the wallet database too, so create them owner-only rather than
+            // at the process umask (commonly 022, which would leave them world-readable).
+            // This command does not take the data directory lock, so it cannot rely on
+            // `lock_datadir` to restrict the datadir on a later run.
             if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-                tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                let mut builder = tokio::fs::DirBuilder::new();
+                builder.recursive(true);
+                #[cfg(unix)]
+                builder.mode(0o700);
+                builder.create(parent).await.map_err(|e| {
                     ErrorKind::Init.context(fl!(
                         "cmd-generate-encryption-identity-write-failed",
                         path = path.display().to_string(),

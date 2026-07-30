@@ -356,6 +356,20 @@ fn generate_encryption_identity_creates_missing_parent_dir() {
         nested.exists(),
         "nested output path should have been created"
     );
+
+    // The created directories hold the encryption identity, so they must not be
+    // readable by other local users regardless of the umask this test runs under.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for dir in [
+            nested.parent().unwrap(),
+            datadir.path().join("sub").as_path(),
+        ] {
+            let mode = std::fs::metadata(dir).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700, "{} should be owner-only", dir.display());
+        }
+    }
 }
 
 /// With `-p` and `--passphrase-file -`, the passphrase is read from standard
