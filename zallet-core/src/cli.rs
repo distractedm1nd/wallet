@@ -295,7 +295,15 @@ pub(crate) struct RpcCliCmd {
     /// Use `zallet rpc help` to get a list of RPC endpoints.
     pub(crate) command: String,
 
-    /// Any parameters for the command.
+    /// Any parameters for the command, as JSON values.
+    ///
+    /// A parameter of the form `@PATH` is read from the first line of `PATH`
+    /// instead, and passed as a JSON string. Use this for secrets such as the
+    /// spending key given to `z_importkey`: command-line arguments are visible
+    /// to other processes and are recorded in shell history.
+    ///
+    /// `@-` reads from standard input, prompting without echo if it is a
+    /// terminal. `@/dev/fd/3` reads from a caller-supplied file descriptor.
     pub(crate) params: Vec<String>,
 }
 
