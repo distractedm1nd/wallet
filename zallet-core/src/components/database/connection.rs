@@ -456,6 +456,14 @@ impl InputSource for DbConnection {
         })
     }
 
+    fn anchor_computable(
+        &self,
+        protocol: ShieldedPool,
+        height: BlockHeight,
+    ) -> Result<bool, Self::Error> {
+        self.with(|db_data| db_data.anchor_computable(protocol, height))
+    }
+
     fn select_spendable_notes(
         &self,
         account: Self::AccountId,
@@ -470,6 +478,29 @@ impl InputSource for DbConnection {
             db_data.select_spendable_notes(
                 account,
                 target_value,
+                sources,
+                target_height,
+                confirmations_policy,
+                exclude,
+                lock_filter,
+            )
+        })
+    }
+
+    fn select_single_spendable_note(
+        &self,
+        account: Self::AccountId,
+        value: zcash_protocol::value::Zatoshis,
+        sources: &[ShieldedPool],
+        target_height: TargetHeight,
+        confirmations_policy: ConfirmationsPolicy,
+        exclude: &[Self::NoteRef],
+        lock_filter: LockFilter<'_>,
+    ) -> Result<ReceivedNotes<Self::NoteRef>, Self::Error> {
+        self.with(|db_data| {
+            db_data.select_single_spendable_note(
+                account,
+                value,
                 sources,
                 target_height,
                 confirmations_policy,
