@@ -972,10 +972,6 @@ criteria = "safe-to-deploy"
 version = "0.1.18"
 criteria = "safe-to-deploy"
 
-[[exemptions.librocksdb-sys]]
-version = "0.17.3+10.4.2"
-criteria = "safe-to-deploy"
-
 [[exemptions.libsqlite3-sys]]
 version = "0.25.2"
 criteria = "safe-to-deploy"
