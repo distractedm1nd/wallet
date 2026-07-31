@@ -577,18 +577,17 @@ fn step_privacy_requirement<NoteRef>(
             PrivacyPolicy::AllowRevealedRecipients,
             IncompatiblePrivacyPolicy::TransparentChange,
         ))
-    } else if let Some(pool) = shielded_pool_crossed_into(step) {
-        // TODO: This should only trigger when there is a non-fee valueBalance.
-        // TODO: Determine whether this is due to the presence of an explicit
-        // recipient address in that pool, or having insufficient funds to pay a
-        // UA within a single pool.
-        Some((
-            PrivacyPolicy::AllowRevealedAmounts,
-            IncompatiblePrivacyPolicy::RevealingShieldedAmount(pool),
-        ))
     } else {
-        // Nothing is revealed by this step.
-        None
+        shielded_pool_crossed_into(step).map(|pool| {
+            // TODO: This should only trigger when there is a non-fee valueBalance.
+            // TODO: Determine whether this is due to the presence of an explicit
+            // recipient address in that pool, or having insufficient funds to pay a
+            // UA within a single pool.
+            (
+                PrivacyPolicy::AllowRevealedAmounts,
+                IncompatiblePrivacyPolicy::RevealingShieldedAmount(pool),
+            )
+        })
     }
 }
 
