@@ -16,6 +16,12 @@ impl AsyncRunnable for AddRpcUserCmd {
                 .map_err(|e| ErrorKind::Generic.context(e))?,
         );
 
+        if password.expose_secret().is_empty() {
+            return Err(ErrorKind::Generic
+                .context(fl!("cmd-add-rpc-user-password-empty"))
+                .into());
+        }
+
         let pwhash = PasswordHash::from_bare(password.expose_secret());
 
         eprintln!("{}", fl!("cmd-add-rpc-user-instructions"));

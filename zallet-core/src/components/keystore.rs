@@ -888,6 +888,15 @@ impl KeyStore {
                 && dfvk.decrypt_diversifier(address).is_some()
             {
                 let extsk = decrypt_standalone_sapling_extsk(&identities, &encrypted_extsk)?;
+
+                // The ciphertext is not bound to the DFVK the row is keyed by, so verify
+                // that the decrypted key reproduces the DFVK used for the lookup.
+                if extsk.to_diversifiable_full_viewing_key().to_bytes() != dfvk_array {
+                    return Err(ErrorKind::Generic
+                        .context(fl!("err-keystore-key-material-mismatch"))
+                        .into());
+                }
+
                 return Ok(Some(extsk));
             }
         }
@@ -1104,7 +1113,9 @@ fn encrypt_string(
 ///
 /// [ZIP 32]: https://zips.z.cash/zip-0032#seed-fingerprints
 fn seed_matches_fingerprint(seed: &[u8], seed_fp: &SeedFingerprint) -> bool {
-    SeedFingerprint::from_seed(seed).is_some_and(|fp| fp.to_bytes() == seed_fp.to_bytes())
+    use subtle::ConstantTimeEq;
+    SeedFingerprint::from_seed(seed)
+        .is_some_and(|fp| bool::from(fp.to_bytes().ct_eq(&seed_fp.to_bytes())))
 }
 
 /// Returns whether the seed derived from the given mnemonic phrase has the given [ZIP 32]

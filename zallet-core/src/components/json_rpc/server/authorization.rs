@@ -162,7 +162,9 @@ impl AuthorizationLayer {
         let mut users: HashMap<String, PasswordHash> = auth
             .into_iter()
             .map(|a| match (a.password, a.pwhash) {
-                (Some(password), None) => {
+                // An empty password provides no authentication; treat it as an
+                // invalid config rather than an open RPC interface.
+                (Some(password), None) if !password.expose_secret().is_empty() => {
                     using_bare_password = true;
                     Ok((a.user, PasswordHash::from_bare(password.expose_secret())))
                 }
@@ -258,6 +260,18 @@ mod tests {
         use base64ct::{Base64, Encoding};
         let encoded = Base64::encode_string(format!("{user}:{password}").as_bytes());
         HeaderValue::from_str(&format!("Basic {encoded}")).unwrap()
+    }
+
+    #[test]
+    fn empty_bare_password_is_rejected() {
+        use crate::config::RpcAuthSection;
+
+        let auth = vec![RpcAuthSection {
+            user: "user1".to_string(),
+            password: Some(secrecy::SecretString::new(String::new())),
+            pwhash: None,
+        }];
+        assert!(AuthorizationLayer::new(auth, None).is_err());
     }
 
     #[test]

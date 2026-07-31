@@ -65,9 +65,42 @@ impl Database {
     pub(crate) async fn open(config: &ZalletConfig) -> Result<Self, Error> {
         let path = config.wallet_db_path();
 
-        let db_exists = fs::try_exists(&path)
-            .await
-            .map_err(|e| ErrorKind::Init.context(e))?;
+        // A zero-length file is not yet a SQLite database (SQLite initializes it
+        // on first write), so treat it like a missing one.
+        let db_exists = match fs::metadata(&path).await {
+            Ok(meta) => meta.len() > 0,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+            Err(e) => return Err(ErrorKind::Init.context(e).into()),
+        };
+
+        // Keep the wallet database private to the owner. This must happen before
+        // SQLite opens it, as SQLite creates its journal files (which contain
+        // database content) with the database file's permissions. A missing
+        // database is created up front so it never exists with wider permissions.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let restrict = match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&path)
+                .await
+            {
+                Ok(_) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).await
+                }
+                Err(e) => Err(e),
+            };
+            restrict.map_err(|e| {
+                ErrorKind::Init.context(fl!(
+                    "err-init-failed-to-restrict-permissions",
+                    path = path.display().to_string(),
+                    error = e.to_string(),
+                ))
+            })?;
+        }
 
         let db_data_pool = connection::pool(&path, config.consensus.network())?;
 

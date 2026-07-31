@@ -21,8 +21,8 @@ The identity file can itself be protected with a passphrase (created with
 identity, the key store starts **locked**: operations that need spending keys
 fail with "Wallet is locked" until it is unlocked with the `walletpassphrase`
 RPC method (`walletlock` re-locks it). In non-interactive contexts the
-passphrase can be supplied via the `ZALLET_IDENTITY_PASSPHRASE` environment
-variable.
+passphrase can be supplied at creation time via `--passphrase-file` (a pipe,
+file descriptor, or `-` for standard input).
 
 Consequences worth internalizing:
 

@@ -28,6 +28,7 @@ pub(crate) use error::LegacyCode;
 pub(crate) mod authorization;
 pub(crate) mod cookie;
 mod http_request_compatibility;
+mod method_logger;
 mod rpc_call_compatibility;
 
 type ServerTask = JoinHandle<Result<(), Error>>;
@@ -86,8 +87,10 @@ pub(crate) async fn spawn<C: Chain>(
         .layer(http_request_compatibility::HttpRequestMiddlewareLayer::new())
         .timeout(timeout);
 
+    // Note: `RpcServiceBuilder::rpc_logger` must not be used here; it logs full
+    // call parameters and responses, which can contain secrets.
     let rpc_middleware = RpcServiceBuilder::new()
-        .rpc_logger(1024)
+        .layer_fn(method_logger::MethodLoggerMiddleware::new)
         .layer_fn(rpc_call_compatibility::FixRpcResponseMiddleware::new);
 
     let server_instance = Server::builder()

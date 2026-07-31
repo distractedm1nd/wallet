@@ -358,24 +358,36 @@ fn generate_encryption_identity_creates_missing_parent_dir() {
     );
 }
 
-/// With `-p` and `ZALLET_IDENTITY_PASSPHRASE` set, the identity file is written
-/// passphrase-encrypted (ASCII-armored) and the command succeeds. Spawned
-/// directly so the child gets the env var without `std::env::set_var` (which is
-/// `unsafe` under edition 2024, and this file is `#![forbid(unsafe_code)]`).
+/// With `-p` and `--passphrase-file -`, the passphrase is read from standard
+/// input, and the identity file is written passphrase-encrypted
+/// (ASCII-armored).
 #[cfg(zallet_build = "wallet")]
 #[test]
 fn generate_encryption_identity_passphrase_writes_armored_file() {
+    use std::io::Write as _;
+
     let datadir = tempdir().unwrap();
     let identity_file = datadir.path().join("encryption-identity.txt");
 
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_zallet-zebra"))
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_zallet-zebra"))
         .arg("--datadir")
         .arg(datadir.path())
         .arg("generate-encryption-identity")
         .arg("-p")
-        .env("ZALLET_IDENTITY_PASSPHRASE", "test-passphrase")
-        .output()
+        .arg("--passphrase-file")
+        .arg("-")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"test-passphrase\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
     assert!(
         output.status.success(),
         "stderr: {}",

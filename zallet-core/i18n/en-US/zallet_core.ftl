@@ -43,6 +43,7 @@ flags-header = Options
 ## Command prompts & output
 
 cmd-add-rpc-user-prompt = Enter password:
+cmd-add-rpc-user-password-empty = Password must not be empty.
 cmd-add-rpc-user-instructions = Add this to your {-zallet_toml} file:
 cmd-seed-fingerprint = Seed fingerprint: {$seedfp}
 cmd-import-mnemonic-prompt = Enter mnemonic:
@@ -54,6 +55,8 @@ cmd-generate-encryption-identity-exists = An encryption identity already exists 
 cmd-generate-encryption-identity-passphrase-prompt = Enter passphrase to encrypt the identity:
 cmd-generate-encryption-identity-passphrase-confirm = Confirm passphrase:
 cmd-generate-encryption-identity-passphrase-mismatch = Passphrases do not match
+cmd-generate-encryption-identity-passphrase-empty = Passphrase must not be empty; an empty passphrase would leave the identity effectively unencrypted.
+cmd-generate-encryption-identity-passphrase-file-failed = Failed to read passphrase from {$path}: {$error}
 
 cmd-migrate-wallet-passphrase-prompt = Enter the passphrase for the encrypted zcashd wallet:
 cmd-migrate-wallet-passphrase-wrong = The passphrase was incorrect; please try again.
@@ -135,6 +138,7 @@ err-init-cannot-find-home-dir =
     Cannot find home directory for the default datadir. Use '{-datadir}' to set
     the datadir directly.
 err-init-failed-to-create-lockfile = Failed to create a lockfile at {$path}: {$error}
+err-init-failed-to-restrict-permissions = Failed to restrict permissions on {$path}: {$error}
 err-init-failed-to-read-lockfile = Failed to read lockfile at {$path}: {$error}
 err-init-zallet-already-running =
     Cannot obtain a lock on data directory {$datadir}. {-zallet} is probably already running.
@@ -420,8 +424,8 @@ err-ux-C = {"                    "}
 
 ## Limit errors
 
-err-excess-orchard-actions =
-    Including {$count} Orchard {$kind} would exceed the current limit of
+err-excess-shielded-actions =
+    Including {$count} {$pool} {$kind} would exceed the current limit of
     {$limit} actions, which exists to prevent memory exhaustion. Restart with
     '{$config}' where {$bound} to allow the wallet to attempt to construct this
     transaction.

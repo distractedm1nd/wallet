@@ -49,6 +49,20 @@ pub const CONFIG_FILE: &str = "zallet.toml";
 
 /// Ensures only a single Zallet process is using the data directory.
 pub(crate) fn lock_datadir(datadir: &Path) -> Result<fmutex::Guard<'static>, Error> {
+    // The datadir holds the wallet database and encryption identity; keep it
+    // private to the owner.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(datadir, fs::Permissions::from_mode(0o700)).map_err(|e| {
+            ErrorKind::Init.context(fl!(
+                "err-init-failed-to-restrict-permissions",
+                path = datadir.display().to_string(),
+                error = e.to_string(),
+            ))
+        })?;
+    }
+
     let lockfile_path = resolve_datadir_path(datadir, Path::new(".lock"));
 
     {

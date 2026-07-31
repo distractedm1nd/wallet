@@ -227,7 +227,10 @@ pub(super) fn propose_and_check(
                     max_sapling_available - value,
                 ) {
                     (false, None) => {
-                        return Err(IncompatiblePrivacyPolicy::RevealingSaplingAmount.into());
+                        return Err(IncompatiblePrivacyPolicy::RevealingShieldedAmount(
+                            ShieldedPool::Sapling,
+                        )
+                        .into());
                     }
                     (false, Some(rest)) => max_sapling_available = rest,
                     (true, _) => (),
@@ -336,48 +339,18 @@ pub(super) fn propose_and_check(
 
     enforce_privacy_policy(&proposal, privacy_policy)?;
 
-    let orchard_actions_limit = APP.config().builder.limits.orchard_actions().into();
-    for step in proposal.steps() {
-        let orchard_spends = step
-            .shielded_inputs()
-            .iter()
-            .flat_map(|inputs| inputs.notes())
-            .filter(|note| note.note().pool() == ShieldedPool::Orchard)
-            .count();
-
-        let orchard_outputs = step
-            .payment_pools()
-            .values()
-            .filter(|pool| pool == &&PoolType::ORCHARD)
-            .count()
-            + step
-                .balance()
-                .proposed_change()
-                .iter()
-                .filter(|change| change.output_pool() == PoolType::ORCHARD)
-                .count();
-
-        let orchard_actions = orchard_spends.max(orchard_outputs);
-
-        if orchard_actions > orchard_actions_limit {
-            let (count, kind) = if orchard_outputs <= orchard_actions_limit {
-                (orchard_spends, "inputs")
-            } else if orchard_spends <= orchard_actions_limit {
-                (orchard_outputs, "outputs")
-            } else {
-                (orchard_actions, "actions")
-            };
-
-            return Err(LegacyCode::Misc.with_message(fl!(
-                "err-excess-orchard-actions",
-                count = count,
-                kind = kind,
-                limit = orchard_actions_limit,
-                config = "-orchardactionlimit=N",
-                bound = format!("N >= %u"),
-            )));
-        }
-    }
+    let actions_limit = APP.config().builder.limits.orchard_actions().into();
+    check_shielded_action_limits(&proposal, actions_limit).map_err(|e| {
+        LegacyCode::Misc.with_message(fl!(
+            "err-excess-shielded-actions",
+            pool = PoolType::Shielded(e.pool).to_string(),
+            count = e.count,
+            kind = e.kind,
+            limit = actions_limit,
+            config = "-orchardactionlimit=N",
+            bound = format!("N >= %u"),
+        ))
+    })?;
 
     Ok(proposal)
 }
@@ -561,10 +534,6 @@ fn step_privacy_requirement<NoteRef>(
 ) -> Option<(PrivacyPolicy, IncompatiblePrivacyPolicy)> {
     let has_transparent_recipient = step.output_in_pool(PoolType::Transparent);
     let has_transparent_change = step.change_in_pool(PoolType::Transparent);
-    let has_sapling_recipient =
-        step.output_in_pool(PoolType::SAPLING) || step.change_in_pool(PoolType::SAPLING);
-    let has_orchard_recipient =
-        step.output_in_pool(PoolType::ORCHARD) || step.change_in_pool(PoolType::ORCHARD);
 
     if step.input_in_pool(PoolType::Transparent) {
         let received_addrs = step
@@ -608,24 +577,51 @@ fn step_privacy_requirement<NoteRef>(
             PrivacyPolicy::AllowRevealedRecipients,
             IncompatiblePrivacyPolicy::TransparentChange,
         ))
-    } else if step.input_in_pool(PoolType::ORCHARD) && has_sapling_recipient {
-        // TODO: This should only trigger when there is a non-fee valueBalance.
-        // TODO: Determine whether this is due to the presence of an explicit Sapling
-        // recipient address, or having insufficient funds to pay a UA within a single pool.
-        Some((
-            PrivacyPolicy::AllowRevealedAmounts,
-            IncompatiblePrivacyPolicy::RevealingSaplingAmount,
-        ))
-    } else if step.input_in_pool(PoolType::SAPLING) && has_orchard_recipient {
-        // TODO: This should only trigger when there is a non-fee valueBalance.
-        Some((
-            PrivacyPolicy::AllowRevealedAmounts,
-            IncompatiblePrivacyPolicy::RevealingOrchardAmount,
-        ))
     } else {
-        // Nothing is revealed by this step.
-        None
+        shielded_pool_crossed_into(step).map(|pool| {
+            // TODO: This should only trigger when there is a non-fee valueBalance.
+            // TODO: Determine whether this is due to the presence of an explicit
+            // recipient address in that pool, or having insufficient funds to pay a
+            // UA within a single pool.
+            (
+                PrivacyPolicy::AllowRevealedAmounts,
+                IncompatiblePrivacyPolicy::RevealingShieldedAmount(pool),
+            )
+        })
     }
+}
+
+/// Every shielded pool, for the privacy checks below, which must consider all cross-pool
+/// value flows.
+///
+/// Written as a match so that adding a `ShieldedPool` variant fails compilation here,
+/// forcing the new pool to be modeled by the privacy policy rather than bypassing it.
+pub(super) fn all_shielded_pools() -> [ShieldedPool; 3] {
+    match ShieldedPool::Sapling {
+        ShieldedPool::Sapling | ShieldedPool::Orchard | ShieldedPool::Ironwood => [
+            ShieldedPool::Sapling,
+            ShieldedPool::Orchard,
+            ShieldedPool::Ironwood,
+        ],
+    }
+}
+
+/// Returns a shielded pool that the given step moves value into from a different
+/// shielded pool, if any.
+///
+/// Crossing between shielded pools reveals the crossing amount in the transaction's
+/// public value balances, so it requires [`PrivacyPolicy::AllowRevealedAmounts`].
+fn shielded_pool_crossed_into<NoteRef>(step: &Step<NoteRef>) -> Option<ShieldedPool> {
+    let input_pools = all_shielded_pools()
+        .into_iter()
+        .filter(|pool| step.input_in_pool(PoolType::Shielded(*pool)))
+        .collect::<Vec<_>>();
+
+    all_shielded_pools().into_iter().find(|pool| {
+        (step.output_in_pool(PoolType::Shielded(*pool))
+            || step.change_in_pool(PoolType::Shielded(*pool)))
+            && input_pools.iter().any(|input_pool| input_pool != pool)
+    })
 }
 
 pub(super) fn enforce_privacy_policy<FeeRuleT, NoteRef>(
@@ -681,6 +677,64 @@ pub(super) fn required_privacy_policy<FeeRuleT, NoteRef>(
         })
 }
 
+/// A shielded pool in which a proposal step exceeds the per-pool action limit.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct ShieldedActionLimitExceeded {
+    pub(super) pool: ShieldedPool,
+    pub(super) count: usize,
+    /// Which side of the pool's bundle exceeds the limit: `"inputs"`, `"outputs"`, or
+    /// `"actions"` when both do.
+    pub(super) kind: &'static str,
+}
+
+/// Checks every step of the proposal against the per-pool action limit.
+///
+/// The limit applies per shielded pool: each pool's spends and outputs bound the memory
+/// needed to prove and construct that pool's part of the transaction.
+pub(super) fn check_shielded_action_limits<FeeRuleT, NoteRef>(
+    proposal: &Proposal<FeeRuleT, NoteRef>,
+    limit: usize,
+) -> Result<(), ShieldedActionLimitExceeded> {
+    for step in proposal.steps() {
+        for pool in all_shielded_pools() {
+            let spends = step
+                .shielded_inputs()
+                .iter()
+                .flat_map(|inputs| inputs.notes())
+                .filter(|note| note.note().pool() == pool)
+                .count();
+
+            let outputs = step
+                .payment_pools()
+                .values()
+                .filter(|payment_pool| **payment_pool == PoolType::Shielded(pool))
+                .count()
+                + step
+                    .balance()
+                    .proposed_change()
+                    .iter()
+                    .filter(|change| change.output_pool() == PoolType::Shielded(pool))
+                    .count();
+
+            let actions = spends.max(outputs);
+
+            if actions > limit {
+                let (count, kind) = if outputs <= limit {
+                    (spends, "inputs")
+                } else if spends <= limit {
+                    (outputs, "outputs")
+                } else {
+                    (actions, "actions")
+                };
+
+                return Err(ShieldedActionLimitExceeded { pool, count, kind });
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Parses the optional `privacy_policy` JSON-RPC argument into a [`PrivacyPolicy`],
 /// defaulting to [`PrivacyPolicy::FullPrivacy`] when absent and rejecting the unsupported
 /// `"LegacyCompat"` policy.
@@ -696,6 +750,7 @@ pub(super) fn parse_privacy_policy(privacy_policy: Option<&str>) -> RpcResult<Pr
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub(super) enum IncompatiblePrivacyPolicy {
     /// Requested [`PrivacyPolicy`] doesn’t include `NoPrivacy`.
     NoPrivacy,
@@ -720,12 +775,9 @@ pub(super) enum IncompatiblePrivacyPolicy {
     TransparentReceiver,
 
     /// Requested [`PrivacyPolicy`] doesn’t include `AllowRevealedAmounts`, but we don’t
-    /// have enough Sapling funds to avoid revealing amounts.
-    RevealingSaplingAmount,
-
-    /// Requested [`PrivacyPolicy`] doesn’t include `AllowRevealedAmounts`, but we don’t
-    /// have enough Orchard funds to avoid revealing amounts.
-    RevealingOrchardAmount,
+    /// have enough funds in the given shielded pool to avoid revealing amounts by
+    /// crossing into it from another pool.
+    RevealingShieldedAmount(ShieldedPool),
 
     /// Requested [`PrivacyPolicy`] doesn’t include `AllowRevealedAmounts`, but we are
     /// trying to pay a UA where we don’t have enough funds in any single pool that it has
@@ -795,18 +847,12 @@ impl From<IncompatiblePrivacyPolicy> for ErrorObjectOwned {
                     policy = "AllowRevealedRecipients"
                 )
             ),
-            IncompatiblePrivacyPolicy::RevealingSaplingAmount => format!(
+            IncompatiblePrivacyPolicy::RevealingShieldedAmount(pool) => format!(
                 "{} {}",
-                fl!("err-privpol-revealing-amount-not-allowed", pool = "Sapling"),
                 fl!(
-                    "rec-privpol-privacy-weakening",
-                    parameter = "privacyPolicy",
-                    policy = "AllowRevealedAmounts"
-                )
-            ),
-            IncompatiblePrivacyPolicy::RevealingOrchardAmount => format!(
-                "{} {}",
-                fl!("err-privpol-revealing-amount-not-allowed", pool = "Orchard"),
+                    "err-privpol-revealing-amount-not-allowed",
+                    pool = PoolType::Shielded(pool).to_string()
+                ),
                 fl!(
                     "rec-privpol-privacy-weakening",
                     parameter = "privacyPolicy",
@@ -1960,5 +2006,310 @@ mod privacy_policy_tests {
             let expected = format!("Unknown privacy policy {s}");
             prop_assert_eq!(err.message(), expected);
         }
+    }
+}
+
+#[cfg(test)]
+mod proposal_policy_tests {
+    //! Tests for the pure proposal checks — [`enforce_privacy_policy`],
+    //! [`required_privacy_policy`], and [`check_shielded_action_limits`] — over
+    //! in-memory proposals built from dummy notes. Note contents beyond pool and value
+    //! are irrelevant to the code under test, so fixed keys and randomness suffice.
+
+    use std::collections::BTreeMap;
+
+    use incrementalmerkletree::Position;
+    use nonempty::NonEmpty;
+    use zcash_client_backend::{
+        data_api::wallet::{ConfirmationsPolicy, TargetHeight},
+        fees::{ChangeValue, TransactionBalance},
+        proposal::ShieldedInputs,
+        wallet::{Note, ReceivedNote},
+    };
+    use zcash_protocol::consensus::BlockHeight;
+
+    use super::*;
+
+    /// The value of every dummy input note.
+    const NOTE_VALUE: u64 = 20_000;
+
+    /// Constructs a dummy note in the given shielded pool.
+    fn note_in_pool(pool: ShieldedPool, value: u64) -> Note {
+        match pool {
+            ShieldedPool::Sapling => {
+                let (_, recipient) =
+                    sapling::zip32::ExtendedSpendingKey::master(&[0x2a; 32]).default_address();
+                Note::Sapling(sapling::Note::from_parts(
+                    recipient,
+                    sapling::value::NoteValue::from_raw(value),
+                    sapling::Rseed::AfterZip212([0x1b; 32]),
+                ))
+            }
+            ShieldedPool::Orchard | ShieldedPool::Ironwood => {
+                let sk: orchard::keys::SpendingKey =
+                    Option::from(orchard::keys::SpendingKey::from_bytes([0x2a; 32]))
+                        .expect("valid spending key");
+                let recipient = orchard::keys::FullViewingKey::from(&sk)
+                    .address_at(0u32, zip32::Scope::External);
+                let rho =
+                    Option::from(orchard::note::Rho::from_bytes(&[0; 32])).expect("valid rho");
+                let rseed = Option::from(orchard::note::RandomSeed::from_bytes([0x1b; 32], &rho))
+                    .expect("valid rseed");
+                let (version, value_pool) = if pool == ShieldedPool::Ironwood {
+                    (orchard::note::NoteVersion::V3, orchard::ValuePool::Ironwood)
+                } else {
+                    (orchard::note::NoteVersion::V2, orchard::ValuePool::Orchard)
+                };
+                Note::Orchard {
+                    note: Option::from(orchard::note::Note::from_parts(
+                        recipient,
+                        orchard::value::NoteValue::from_raw(value),
+                        rho,
+                        rseed,
+                        version,
+                    ))
+                    .expect("valid note"),
+                    pool: value_pool,
+                }
+            }
+        }
+    }
+
+    /// Wraps one dummy note of [`NOTE_VALUE`] per entry of `pools` as a step's shielded
+    /// inputs.
+    fn shielded_inputs_spending(pools: &[ShieldedPool]) -> ShieldedInputs<u32> {
+        let notes = pools
+            .iter()
+            .enumerate()
+            .map(|(i, pool)| {
+                ReceivedNote::from_parts(
+                    i as u32,
+                    TxId::from_bytes([0; 32]),
+                    i as u16,
+                    note_in_pool(*pool, NOTE_VALUE),
+                    zip32::Scope::External,
+                    Position::from(i as u64),
+                    Some(BlockHeight::from_u32(100)),
+                    None,
+                )
+            })
+            .collect::<Vec<_>>();
+        ShieldedInputs::from_parts(NonEmpty::from_vec(notes).expect("at least one input pool"))
+    }
+
+    /// A single-step proposal spending one dummy note per entry of `input_pools`, paying
+    /// `request` (whose payments are placed in `payment_pools`) and returning `change`;
+    /// the input value not consumed by payments or change becomes the fee, keeping the
+    /// step balanced.
+    fn build_proposal(
+        input_pools: &[ShieldedPool],
+        request: TransactionRequest,
+        payment_pools: BTreeMap<usize, PoolType>,
+        change: Vec<ChangeValue>,
+    ) -> Proposal<(), u32> {
+        let input_total = NOTE_VALUE * input_pools.len() as u64;
+        let payments_total = u64::from(
+            request
+                .total()
+                .expect("no overflow")
+                .expect("all payments carry amounts"),
+        );
+        let change_total = change.iter().map(|c| u64::from(c.value())).sum::<u64>();
+        let fee = input_total
+            .checked_sub(payments_total + change_total)
+            .expect("inputs cover outputs");
+
+        Proposal::single_step(
+            request,
+            payment_pools,
+            vec![],
+            Some(shielded_inputs_spending(input_pools)),
+            BlockHeight::from_u32(100),
+            TransactionBalance::new(change, Zatoshis::const_from_u64(fee)).expect("valid balance"),
+            (),
+            TargetHeight::from(BlockHeight::from_u32(101)),
+            ConfirmationsPolicy::default(),
+            false,
+            false,
+        )
+        .expect("valid proposal")
+    }
+
+    /// A proposal with no payments: spends one dummy note per entry of `input_pools` and
+    /// returns `change`.
+    fn change_only_proposal(
+        input_pools: &[ShieldedPool],
+        change: Vec<ChangeValue>,
+    ) -> Proposal<(), u32> {
+        build_proposal(
+            input_pools,
+            TransactionRequest::empty(),
+            BTreeMap::new(),
+            change,
+        )
+    }
+
+    fn change(pool: ShieldedPool, value: u64) -> ChangeValue {
+        ChangeValue::shielded(pool, Zatoshis::const_from_u64(value), None)
+    }
+
+    /// A step that keeps value within a single shielded pool reveals nothing, whichever
+    /// pool it is.
+    #[test]
+    fn same_pool_spend_satisfies_full_privacy() {
+        for pool in all_shielded_pools() {
+            let proposal = change_only_proposal(&[pool], vec![change(pool, 10_000)]);
+            assert_eq!(
+                enforce_privacy_policy(&proposal, PrivacyPolicy::FullPrivacy),
+                Ok(()),
+                "within {pool:?}",
+            );
+            assert_eq!(
+                required_privacy_policy(&proposal),
+                PrivacyPolicy::FullPrivacy,
+                "within {pool:?}",
+            );
+        }
+    }
+
+    /// Moving value between two distinct shielded pools reveals the crossing amount in
+    /// the transaction's public value balances, so `FullPrivacy` must reject it for
+    /// every ordered pool pair — including the pairs involving Ironwood that a pairwise
+    /// Sapling↔Orchard check would miss.
+    #[test]
+    fn crossing_into_any_other_pool_requires_revealed_amounts() {
+        for from in all_shielded_pools() {
+            for to in all_shielded_pools() {
+                if from == to {
+                    continue;
+                }
+                let proposal = change_only_proposal(&[from], vec![change(to, 10_000)]);
+                assert_eq!(
+                    enforce_privacy_policy(&proposal, PrivacyPolicy::FullPrivacy),
+                    Err(IncompatiblePrivacyPolicy::RevealingShieldedAmount(to)),
+                    "crossing {from:?} -> {to:?}",
+                );
+                assert_eq!(
+                    enforce_privacy_policy(&proposal, PrivacyPolicy::AllowRevealedAmounts),
+                    Ok(()),
+                    "crossing {from:?} -> {to:?}",
+                );
+                assert_eq!(
+                    required_privacy_policy(&proposal),
+                    PrivacyPolicy::AllowRevealedAmounts,
+                    "crossing {from:?} -> {to:?}",
+                );
+            }
+        }
+    }
+
+    /// A payment (not just change) into a pool the inputs don't come from is likewise a
+    /// crossing.
+    #[test]
+    fn payment_into_another_pool_requires_revealed_amounts() {
+        let request = TransactionRequest::new(vec![
+            Payment::new(
+                arb::SAPLING_ADDR.parse::<ZcashAddress>().expect("valid"),
+                Some(Zatoshis::const_from_u64(10_000)),
+                None,
+                None,
+                None,
+                vec![],
+            )
+            .expect("valid payment"),
+        ])
+        .expect("valid request");
+
+        let proposal = build_proposal(
+            &[ShieldedPool::Orchard],
+            request,
+            [(0, PoolType::SAPLING)].into_iter().collect(),
+            vec![],
+        );
+
+        assert_eq!(
+            enforce_privacy_policy(&proposal, PrivacyPolicy::FullPrivacy),
+            Err(IncompatiblePrivacyPolicy::RevealingShieldedAmount(
+                ShieldedPool::Sapling
+            )),
+        );
+        assert_eq!(
+            required_privacy_policy(&proposal),
+            PrivacyPolicy::AllowRevealedAmounts,
+        );
+    }
+
+    /// The transaction-size cap applies to every shielded pool's spends, not only
+    /// Orchard's.
+    #[test]
+    fn action_limit_applies_to_spends_in_every_pool() {
+        for pool in all_shielded_pools() {
+            let proposal = change_only_proposal(&[pool; 3], vec![change(pool, 10_000)]);
+            assert_eq!(
+                check_shielded_action_limits(&proposal, 2),
+                Err(ShieldedActionLimitExceeded {
+                    pool,
+                    count: 3,
+                    kind: "inputs",
+                }),
+                "spends in {pool:?}",
+            );
+            assert_eq!(
+                check_shielded_action_limits(&proposal, 3),
+                Ok(()),
+                "spends in {pool:?}",
+            );
+        }
+    }
+
+    /// Change outputs count against the same per-pool limit as spends.
+    #[test]
+    fn action_limit_applies_to_outputs_in_every_pool() {
+        for pool in all_shielded_pools() {
+            let proposal = change_only_proposal(&[pool; 2], vec![change(pool, 10_000); 3]);
+            assert_eq!(
+                check_shielded_action_limits(&proposal, 2),
+                Err(ShieldedActionLimitExceeded {
+                    pool,
+                    count: 3,
+                    kind: "outputs",
+                }),
+                "outputs in {pool:?}",
+            );
+        }
+    }
+
+    /// When both sides of a pool's bundle exceed the limit, the combined action count is
+    /// reported.
+    #[test]
+    fn action_limit_reports_actions_when_both_sides_exceed() {
+        for pool in all_shielded_pools() {
+            let proposal = change_only_proposal(&[pool; 3], vec![change(pool, 10_000); 3]);
+            assert_eq!(
+                check_shielded_action_limits(&proposal, 2),
+                Err(ShieldedActionLimitExceeded {
+                    pool,
+                    count: 3,
+                    kind: "actions",
+                }),
+                "actions in {pool:?}",
+            );
+        }
+    }
+
+    /// The limit is per pool: spends spread across pools may exceed it in aggregate as
+    /// long as no single pool does.
+    #[test]
+    fn action_limit_is_per_pool() {
+        let proposal = change_only_proposal(
+            &[
+                ShieldedPool::Sapling,
+                ShieldedPool::Sapling,
+                ShieldedPool::Orchard,
+                ShieldedPool::Orchard,
+            ],
+            vec![],
+        );
+        assert_eq!(check_shielded_action_limits(&proposal, 2), Ok(()));
     }
 }
