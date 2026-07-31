@@ -1378,7 +1378,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1544,7 +1544,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2717,7 +2717,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2974,7 +2974,7 @@ version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a1886916523694cd6ea3d175f03a1e5010699a2a4cc13696d83d7bea1d80638"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3352,7 +3352,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3711,7 +3711,7 @@ dependencies = [
  "serde_with",
  "zcash_note_encryption",
  "zcash_primitives 0.30.0",
- "zcash_protocol 0.10.1",
+ "zcash_protocol 0.10.3",
  "zcash_script",
  "zcash_transparent 0.10.0",
 ]
@@ -4005,7 +4005,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03da047801ff44bb6a4d407d4860c05fd70bb81714e6b2f3812603d5b145b042"
 dependencies = [
  "heck",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "log",
  "multimap",
  "petgraph 0.8.3",
@@ -4026,7 +4026,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -4152,7 +4152,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4682,7 +4682,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4741,7 +4741,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5452,10 +5452,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6479,7 +6479,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6879,9 +6879,9 @@ dependencies = [
  "zaino-fetch",
  "zaino-proto",
  "zcash_address 0.13.0",
- "zcash_keys 0.16.0",
+ "zcash_keys 0.16.1",
  "zcash_primitives 0.30.0",
- "zcash_protocol 0.10.1",
+ "zcash_protocol 0.10.3",
  "zcash_transparent 0.10.0",
  "zebra-chain",
  "zebra-rpc",
@@ -6965,11 +6965,11 @@ dependencies = [
  "zcash_client_backend",
  "zcash_client_sqlite",
  "zcash_encoding",
- "zcash_keys 0.16.0",
+ "zcash_keys 0.16.1",
  "zcash_note_encryption",
  "zcash_primitives 0.30.0",
  "zcash_proofs",
- "zcash_protocol 0.10.1",
+ "zcash_protocol 0.10.3",
  "zcash_script",
  "zcash_spec",
  "zcash_transparent 0.10.0",
@@ -6998,9 +6998,9 @@ dependencies = [
  "zaino-state",
  "zallet-core",
  "zcash_client_backend",
- "zcash_keys 0.16.0",
+ "zcash_keys 0.16.1",
  "zcash_primitives 0.30.0",
- "zcash_protocol 0.10.1",
+ "zcash_protocol 0.10.3",
  "zcash_transparent 0.10.0",
  "zebra-chain",
  "zebra-rpc",
@@ -7032,14 +7032,14 @@ dependencies = [
  "corez",
  "f4jumble",
  "zcash_encoding",
- "zcash_protocol 0.10.1",
+ "zcash_protocol 0.10.3",
 ]
 
 [[package]]
 name = "zcash_client_backend"
-version = "0.24.0-rc.4"
+version = "0.24.0-rc.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e019c2adb1eb2c3479603f4556e85c01022723f14ce8837a3bb225cb2af4d3f"
+checksum = "832ace878c125814bb9e82228d3661499124c6f2936e60fc1df3c6876eb54624"
 dependencies = [
  "base64 0.22.1",
  "bech32 0.11.1",
@@ -7079,10 +7079,10 @@ dependencies = [
  "which",
  "zcash_address 0.13.0",
  "zcash_encoding",
- "zcash_keys 0.16.0",
+ "zcash_keys 0.16.1",
  "zcash_note_encryption",
  "zcash_primitives 0.30.0",
- "zcash_protocol 0.10.1",
+ "zcash_protocol 0.10.3",
  "zcash_script",
  "zcash_transparent 0.10.0",
  "zip32",
@@ -7091,9 +7091,9 @@ dependencies = [
 
 [[package]]
 name = "zcash_client_sqlite"
-version = "0.22.0-rc.4"
+version = "0.22.0-rc.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a496ad83b77e790bd0ea1013db14961b3ff825550097a2658837dc7e92a23d53"
+checksum = "c4a789c0038359968f93bfe3952d2b942e3bae5582f79c2f31137c6fd736a225"
 dependencies = [
  "bech32 0.11.1",
  "bip0039",
@@ -7130,10 +7130,10 @@ dependencies = [
  "zcash_address 0.13.0",
  "zcash_client_backend",
  "zcash_encoding",
- "zcash_keys 0.16.0",
+ "zcash_keys 0.16.1",
  "zcash_pool_migration",
  "zcash_primitives 0.30.0",
- "zcash_protocol 0.10.1",
+ "zcash_protocol 0.10.3",
  "zcash_script",
  "zcash_transparent 0.10.0",
  "zewif",
@@ -7195,9 +7195,9 @@ dependencies = [
 
 [[package]]
 name = "zcash_keys"
-version = "0.16.0"
+version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc842e024fe37e52cfd3920826c4a28cc2a023fc9d77351d9c0f310becae3eb7"
+checksum = "def800f128e459eedebc900f36f408eaf0687634128dcf64ecfeaeebc3e16c14"
 dependencies = [
  "bech32 0.11.1",
  "bip0039",
@@ -7221,7 +7221,7 @@ dependencies = [
  "tracing",
  "zcash_address 0.13.0",
  "zcash_encoding",
- "zcash_protocol 0.10.1",
+ "zcash_protocol 0.10.3",
  "zcash_transparent 0.10.0",
  "zeroize",
  "zip32",
@@ -7242,9 +7242,9 @@ dependencies = [
 
 [[package]]
 name = "zcash_pool_migration"
-version = "0.1.0-rc.3"
+version = "0.1.0-rc.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7e4169a96a25de216d4a7265fe772003aaeea05ed2566b14cfc0b8146b1f99e"
+checksum = "9010904169a92805128b3a8eab0dd4ff79fd164dd416af68aaeac5c7ebbd2522"
 dependencies = [
  "corez",
  "getset",
@@ -7255,9 +7255,10 @@ dependencies = [
  "rand_core 0.6.4",
  "shardtree",
  "zcash_client_backend",
- "zcash_keys 0.16.0",
+ "zcash_keys 0.16.1",
  "zcash_primitives 0.30.0",
- "zcash_protocol 0.10.1",
+ "zcash_protocol 0.10.3",
+ "zip32",
 ]
 
 [[package]]
@@ -7316,7 +7317,7 @@ dependencies = [
  "sha2 0.10.9",
  "zcash_encoding",
  "zcash_note_encryption",
- "zcash_protocol 0.10.1",
+ "zcash_protocol 0.10.3",
  "zcash_script",
  "zcash_transparent 0.10.0",
 ]
@@ -7359,9 +7360,9 @@ dependencies = [
 
 [[package]]
 name = "zcash_protocol"
-version = "0.10.1"
+version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4034db33a1ce58416430e065b01474b958e4649caa3e06e20654683a95149710"
+checksum = "9f074493fff337207e28bcfa5bbdf0e2a125c4203a4bdd07e72067eea81e9e7b"
 dependencies = [
  "corez",
  "document-features",
@@ -7440,7 +7441,7 @@ dependencies = [
  "subtle",
  "zcash_address 0.13.0",
  "zcash_encoding",
- "zcash_protocol 0.10.1",
+ "zcash_protocol 0.10.3",
  "zcash_script",
  "zcash_spec",
  "zip32",
@@ -7505,7 +7506,7 @@ dependencies = [
  "zcash_history",
  "zcash_note_encryption",
  "zcash_primitives 0.30.0",
- "zcash_protocol 0.10.1",
+ "zcash_protocol 0.10.3",
  "zcash_script",
  "zcash_transparent 0.10.0",
 ]
@@ -7544,7 +7545,7 @@ dependencies = [
  "tracing-futures",
  "zcash_primitives 0.30.0",
  "zcash_proofs",
- "zcash_protocol 0.10.1",
+ "zcash_protocol 0.10.3",
  "zcash_script",
  "zcash_transparent 0.10.0",
  "zebra-chain",
@@ -7654,10 +7655,10 @@ dependencies = [
  "tracing",
  "which",
  "zcash_address 0.13.0",
- "zcash_keys 0.16.0",
+ "zcash_keys 0.16.1",
  "zcash_primitives 0.30.0",
  "zcash_proofs",
- "zcash_protocol 0.10.1",
+ "zcash_protocol 0.10.3",
  "zcash_script",
  "zcash_transparent 0.10.0",
  "zebra-chain",
@@ -7886,7 +7887,7 @@ dependencies = [
  "nom 7.1.3",
  "percent-encoding",
  "zcash_address 0.13.0",
- "zcash_protocol 0.10.1",
+ "zcash_protocol 0.10.3",
 ]
 
 [[package]]

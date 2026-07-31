@@ -31,6 +31,9 @@ url = "https://raw.githubusercontent.com/ZcashFoundation/zebra/main/supply-chain
 
 [policy.incrementalmerkletree]
 
+[policy.librocksdb-sys]
+audit-as-crates-io = false
+
 [policy.shardtree]
 
 [policy.tower-batch-control]
