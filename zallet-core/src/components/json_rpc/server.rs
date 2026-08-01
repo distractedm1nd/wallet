@@ -59,6 +59,7 @@ pub(crate) async fn spawn<C: Chain>(
         chain.clone(),
         decryptor,
         sync_status.clone(),
+        config.async_operation_limit(),
     );
     let rpc_impl = RpcImpl::new(
         wallet,

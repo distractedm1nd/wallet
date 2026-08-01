@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::components::json_rpc::asyncop::{
-    AsyncOperation, OperationId, OperationState, OperationStatus,
+    AsyncOperation, OperationId, OperationQueue, OperationStatus,
 };
 
 /// Response to a `z_getoperationstatus` or `z_getoperationresult` RPC request.
@@ -35,26 +35,12 @@ pub(crate) async fn status(
     Ok(ResultType(ret))
 }
 
-pub(crate) async fn result(
-    async_ops: &mut Vec<AsyncOperation>,
-    operationid: Vec<OperationId>,
-) -> Response {
+pub(crate) async fn result(async_ops: &OperationQueue, operationid: Vec<OperationId>) -> Response {
     let filter = operationid.into_iter().collect::<HashSet<_>>();
 
-    let mut ret = vec![];
-    let mut remove = HashSet::new();
-
-    for op in filtered(async_ops, filter) {
-        if matches!(
-            op.state().await,
-            OperationState::Success | OperationState::Failed | OperationState::Cancelled
-        ) {
-            ret.push(op.to_status().await);
-            remove.insert(op.operation_id().clone());
-        }
-    }
-
-    async_ops.retain(|op| !remove.contains(op.operation_id()));
+    let ret = async_ops
+        .collect_finished(|op| filter.is_empty() || filter.contains(op.operation_id()))
+        .await;
 
     Ok(ResultType(ret))
 }

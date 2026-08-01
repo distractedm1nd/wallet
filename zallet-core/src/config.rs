@@ -750,6 +750,17 @@ impl NoteManagementSection {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, Documented, DocumentedFields)]
 #[serde(deny_unknown_fields)]
 pub struct RpcSection {
+    /// The maximum number of asynchronous RPC operations (e.g. `z_sendmany`) that can
+    /// be queued at once.
+    ///
+    /// Finished operations are retained in the queue until their results are collected
+    /// with `z_getoperationresult`, or until they are evicted (oldest first) to make
+    /// room for a new operation. New operations are rejected while the queue is full
+    /// of unfinished operations.
+    ///
+    /// Setting this to 0 disables the affected RPC methods entirely.
+    pub async_operation_limit: Option<usize>,
+
     /// Addresses to listen for JSON-RPC connections.
     ///
     /// Note: The RPC server is disabled by default. To enable the RPC server, set a
@@ -775,6 +786,13 @@ pub struct RpcSection {
 }
 
 impl RpcSection {
+    /// The maximum number of asynchronous RPC operations that can be queued at once.
+    ///
+    /// Default is 1000.
+    pub fn async_operation_limit(&self) -> usize {
+        self.async_operation_limit.unwrap_or(1000)
+    }
+
     /// Timeout during HTTP requests.
     ///
     /// Default is 30 seconds.
@@ -911,6 +929,7 @@ impl ZalletConfig {
                 "target_note_count",
                 conf.note_management.target_note_count(),
             ),
+            rpc("async_operation_limit", conf.rpc.async_operation_limit()),
             rpc("bind", &conf.rpc.bind),
             rpc("timeout", conf.rpc.timeout().as_secs()),
             sync("recover_batch_size", conf.sync.recover_batch_size()),
