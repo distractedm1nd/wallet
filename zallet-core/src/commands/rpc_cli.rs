@@ -4,6 +4,7 @@ use std::fmt;
 use std::time::Duration;
 
 use abscissa_core::Runnable;
+use age::secrecy::zeroize::Zeroizing;
 use base64ct::{Base64, Encoding};
 use hyper::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use jsonrpsee::core::{client::ClientT, params::ArrayParams};
@@ -122,8 +123,11 @@ impl AsyncRunnable for RpcCliCmd {
         // Construct the request.
         let mut params = ArrayParams::new();
         for param in &self.params {
-            let value: serde_json::Value = serde_json::from_str(param)
-                .map_err(|_| RpcCliError::InvalidParameter(param.clone()))?;
+            let value = match param.strip_prefix('@') {
+                Some(source) => serde_json::Value::String(read_indirect_param(source)?),
+                None => serde_json::from_str(param)
+                    .map_err(|_| RpcCliError::InvalidParameter(param.clone()))?,
+            };
             params
                 .insert(value)
                 .map_err(|_| RpcCliError::InvalidParameter(param.clone()))?;
@@ -146,6 +150,51 @@ impl AsyncRunnable for RpcCliCmd {
     }
 }
 
+/// Reads the value of an `@PATH` parameter: the first line of `PATH`, without its line
+/// terminator.
+///
+/// `-` means standard input, prompting without echo when it is a terminal. This exists so
+/// that secret parameters (a `z_importkey` spending key, a `walletpassphrase` passphrase)
+/// never have to appear in the process argument vector, where other local users can read
+/// them from process listings and where the shell records them in its history.
+fn read_indirect_param(source: &str) -> Result<String, RpcCliError> {
+    use std::io::{BufRead, IsTerminal};
+
+    let read_failed = |e: std::io::Error| RpcCliError::ParamReadFailed {
+        source: source.to_string(),
+        error: e.to_string(),
+    };
+
+    if source == "-" && std::io::stdin().is_terminal() {
+        return rpassword::prompt_password(fl!("rpc-cli-param-prompt")).map_err(read_failed);
+    }
+
+    // The buffer holds the parameter in the clear, so zeroize it on drop.
+    let mut buf = Zeroizing::new(Vec::new());
+    if source == "-" {
+        std::io::stdin()
+            .lock()
+            .read_until(b'\n', &mut buf)
+            .map_err(read_failed)?;
+    } else {
+        let file = std::fs::File::open(source).map_err(read_failed)?;
+        std::io::BufReader::new(file)
+            .read_until(b'\n', &mut buf)
+            .map_err(read_failed)?;
+    }
+
+    while matches!(buf.last(), Some(b'\n' | b'\r')) {
+        buf.pop();
+    }
+
+    std::str::from_utf8(&buf)
+        .map(|s| s.to_owned())
+        .map_err(|e| RpcCliError::ParamReadFailed {
+            source: source.to_string(),
+            error: e.to_string(),
+        })
+}
+
 impl Runnable for RpcCliCmd {
     fn run(&self) {
         self.run_on_runtime();
@@ -159,6 +208,13 @@ pub enum RpcCliError {
     FailedToConnect,
     /// A request parameter was not valid JSON.
     InvalidParameter(String),
+    /// An `@PATH` request parameter could not be read.
+    ParamReadFailed {
+        /// The `PATH` the parameter was to be read from.
+        source: String,
+        /// Why reading it failed.
+        error: String,
+    },
     /// The JSON-RPC request failed.
     RequestFailed(String),
     /// The wallet is not running a JSON-RPC server.
@@ -172,6 +228,14 @@ impl fmt::Display for RpcCliError {
             Self::InvalidParameter(param) => {
                 wfl!(f, "err-rpc-cli-invalid-param", parameter = param)
             }
+            Self::ParamReadFailed { source, error } => {
+                wfl!(
+                    f,
+                    "err-rpc-cli-param-read-failed",
+                    path = source,
+                    error = error
+                )
+            }
             Self::RequestFailed(e) => {
                 wfl!(f, "err-rpc-cli-request-failed", error = e)
             }
@@ -181,3 +245,42 @@ impl fmt::Display for RpcCliError {
 }
 
 impl std::error::Error for RpcCliError {}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write as _;
+
+    use super::read_indirect_param;
+
+    /// Writes `contents` to a temporary file and returns its path.
+    fn temp_file(contents: &[u8]) -> tempfile::TempPath {
+        let mut f = tempfile::NamedTempFile::new().expect("creates temp file");
+        f.write_all(contents).expect("writes temp file");
+        f.into_temp_path()
+    }
+
+    /// Only the first line is taken, and the line terminator is not part of the value:
+    /// a here-doc or `echo` adds a trailing newline that is not part of the secret.
+    #[test]
+    fn reads_first_line_without_terminator() {
+        for (contents, expected) in [
+            (&b"secret-key"[..], "secret-key"),
+            (&b"secret-key\n"[..], "secret-key"),
+            (&b"secret-key\r\n"[..], "secret-key"),
+            (&b"secret-key\nnot this\n"[..], "secret-key"),
+            (&b""[..], ""),
+        ] {
+            let path = temp_file(contents);
+            assert_eq!(
+                read_indirect_param(path.to_str().expect("valid path")).expect("reads param"),
+                expected,
+                "contents {contents:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn missing_file_is_an_error() {
+        assert!(read_indirect_param("/nonexistent/zallet-rpc-param").is_err());
+    }
+}

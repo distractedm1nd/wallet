@@ -1,5 +1,7 @@
 use std::convert::Infallible;
 
+use abscissa_core::Application;
+
 use jsonrpsee::core::{JsonValue, RpcResult};
 use secrecy::ExposeSecret;
 use serde_json::json;
@@ -39,6 +41,7 @@ use crate::{
         keystore::KeyStore,
     },
     fl,
+    prelude::APP,
 };
 
 #[cfg(feature = "zcashd-import")]
@@ -126,8 +129,22 @@ pub(crate) async fn call<C: Chain>(
 
     let privacy_policy = parse_privacy_policy(privacy_policy.as_deref())?;
 
-    // Sanity check for transaction size
-    // TODO: https://github.com/zcash/zallet/issues/255
+    // Reject an oversized recipient set before input selection and proving, which both
+    // scale with it. Every recipient needs at least one output in its pool, so this only
+    // rejects requests the post-proposal per-pool check would reject anyway.
+    //
+    // TODO: also bound the serialized transaction size.
+    // https://github.com/zcash/zallet/issues/255
+    let actions_limit: usize = APP.config().builder.limits.orchard_actions().into();
+    if amounts.len() > actions_limit {
+        return Err(LegacyCode::Misc.with_message(fl!(
+            "err-excess-recipients",
+            count = amounts.len(),
+            limit = actions_limit,
+            config = "-orchardactionlimit=N",
+            bound = format!("N >= %u"),
+        )));
+    }
 
     let confirmations_policy = confirmations_policy_for_minconf(minconf)?;
 

@@ -43,6 +43,7 @@ flags-header = Options
 ## Command prompts & output
 
 cmd-add-rpc-user-prompt = Enter password:
+rpc-cli-param-prompt = Enter parameter value:
 cmd-add-rpc-user-password-empty = Password must not be empty.
 cmd-add-rpc-user-instructions = Add this to your {-zallet_toml} file:
 cmd-seed-fingerprint = Seed fingerprint: {$seedfp}
@@ -424,6 +425,11 @@ err-ux-C = {"                    "}
 
 ## Limit errors
 
+err-excess-recipients =
+    Sending to {$count} recipients would exceed the current limit of {$limit}
+    actions, which exists to prevent memory exhaustion, because every recipient
+    needs at least one output. Restart with '{$config}' where {$bound} to allow
+    the wallet to attempt to construct this transaction.
 err-excess-shielded-actions =
     Including {$count} {$pool} {$kind} would exceed the current limit of
     {$limit} actions, which exists to prevent memory exhaustion. Restart with
@@ -477,6 +483,7 @@ err-rpc-convert-tex-not-p2pkh = Address is not a transparent p2pkh address
 
 err-rpc-cli-conn-failed = Failed to connect to the Zallet wallet's JSON-RPC port.
 err-rpc-cli-invalid-param = Invalid parameter '{$parameter}'
+err-rpc-cli-param-read-failed = Failed to read parameter from {$path}: {$error}
 err-rpc-cli-no-server = No JSON-RPC port is available.
 err-rpc-cli-request-failed = JSON-RPC request failed: {$error}
 

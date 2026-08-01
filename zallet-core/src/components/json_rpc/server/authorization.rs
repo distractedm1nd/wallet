@@ -170,7 +170,12 @@ impl AuthorizationLayer {
                 }
                 (None, Some(pwhash)) => {
                     using_pwhash = true;
-                    Ok((a.user, pwhash.parse()?))
+                    let hash: PasswordHash = pwhash.parse()?;
+                    // Reject empty passwords.
+                    if hash.check("") {
+                        return Err(());
+                    }
+                    Ok((a.user, hash))
                 }
                 _ => Err(()),
             })
@@ -272,6 +277,27 @@ mod tests {
             pwhash: None,
         }];
         assert!(AuthorizationLayer::new(auth, None).is_err());
+    }
+
+    /// An empty password pre-hashed into a `pwhash` entry is just as unauthenticated as a
+    /// bare empty password, and must be rejected on the same grounds.
+    #[test]
+    fn pwhash_of_empty_password_is_rejected() {
+        use crate::config::RpcAuthSection;
+
+        let auth = vec![RpcAuthSection {
+            user: "__cookie__".to_string(),
+            password: None,
+            pwhash: Some(PasswordHash::from_bare("").to_string()),
+        }];
+        assert!(AuthorizationLayer::new(auth, None).is_err());
+
+        let auth = vec![RpcAuthSection {
+            user: "user1".to_string(),
+            password: None,
+            pwhash: Some(PasswordHash::from_bare("abadpassword").to_string()),
+        }];
+        assert!(AuthorizationLayer::new(auth, None).is_ok());
     }
 
     #[test]

@@ -115,12 +115,23 @@ be considered breaking changes.
 - The `builder.limits.orchard_actions` transaction-size limit now applies to
   each shielded pool's spends and outputs, not only Orchard's.
 - Empty JSON-RPC passwords are now rejected, both by `add-rpc-user` and when
-  loading a bare `rpc.auth` password from the config.
-- `zallet rpc help` is now answered locally instead of being sent to the
-  wallet's JSON-RPC server, so it no longer requires a config file, an
-  initialized wallet, or a running `zallet start`. The command argument may
-  now be passed bare (`zallet rpc help getwalletinfo`) in addition to the
-  JSON-quoted form.
+  loading a bare `rpc.auth` password from the config. This includes a
+  configured `pwhash` that was generated from an empty password, which
+  authenticates the secretless credential `<username>:`.
+- `zallet rpc` accepts a parameter written `@PATH`, read from the first line of
+  `PATH` and sent as a JSON string. Use it for secrets such as the spending key
+  given to `z_importkey`: command-line arguments are visible to other local
+  users and are recorded in shell history. `@-` reads standard input, prompting
+  without echo when it is a terminal.
+- `generate-encryption-identity` now creates missing parent directories with
+  mode 0700 on Unix, rather than at the process umask.
+- `z_sendmany` now rejects a recipient count that exceeds the
+  `builder.limits.orchard_actions` limit before selecting inputs, rather than
+  after building a proposal.
+- `z_shieldcoinbase` now applies the `builder.limits.orchard_actions` limit to
+  its proposal; previously it had no action limit, so shielding a large
+  coinbase UTXO set without the `limit` parameter was bounded only at
+  broadcast time.
 - The standalone release binaries are now published as one signed archive per
   platform, `zallet-<version>-<arch>.tar.gz`, containing all three binaries
   (`zallet`, `zallet-zebra`, `zallet-zaino`). Previously each binary was a
