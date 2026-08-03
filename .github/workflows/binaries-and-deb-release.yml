@@ -201,16 +201,15 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
 
-      - name: Retrieve GPG signing key from Secrets Manager
+      - name: Import GPG keys
         run: |
+          set -euo pipefail
+          # Pipe directly from Secrets Manager to avoid writing the private key
+          # to a plaintext file in the runner working directory.
           aws secretsmanager get-secret-value \
             --secret-id /release/gpg-signing-key \
             --query SecretString \
-            --output text > private.pgp
-
-      - name: Import GPG keys
-        run: |
-          gpg --import private.pgp
+            --output text | gpg --import
           wget -qO - https://apt.z.cash/zcash.asc | gpg --no-default-keyring --keyring trustedkeys.gpg --import
 
       - name: Install cargo-deb
@@ -219,7 +218,7 @@ jobs:
         # "error[E0658]: `let` expressions in this position are unstable".
         # 2.x has a stable MSRV and the same `--no-build` interface we use.
         # --locked builds against cargo-deb's own lockfile (reproducible deps).
-        run: cargo install cargo-deb --version "^2.10" --locked
+        run: cargo install cargo-deb --version "=2.10.0" --locked
 
       # The amd64 and arm64 build jobs each upload a distinct per-arch artifact
       # (`<name>-amd64`, `<name>-arm64`) because v4+ artifacts are immutable and
@@ -668,9 +667,7 @@ jobs:
         run: |
           set -euo pipefail
           aws secretsmanager get-secret-value --secret-id /release/gpg-signing-key \
-            --query SecretString --output text > /tmp/k.pgp
-          gpg --batch --import /tmp/k.pgp
-          shred -u /tmp/k.pgp
+            --query SecretString --output text | gpg --batch --import
       - name: Build distribution list
         run: |
           set -euo pipefail
