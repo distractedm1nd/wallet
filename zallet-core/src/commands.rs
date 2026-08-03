@@ -27,6 +27,8 @@ mod repair;
 mod start;
 
 #[cfg(zallet_build = "wallet")]
+mod confirm_backup;
+#[cfg(zallet_build = "wallet")]
 mod export_mnemonic;
 #[cfg(zallet_build = "wallet")]
 mod generate_encryption_identity;
@@ -42,6 +44,8 @@ mod init_wallet_encryption;
 mod migrate_zcash_conf;
 #[cfg(all(zallet_build = "wallet", feature = "zcashd-import"))]
 mod migrate_zcashd_wallet;
+#[cfg(zallet_build = "wallet")]
+mod seed_selection;
 
 #[cfg(feature = "rpc-cli")]
 pub(crate) mod rpc_cli;

@@ -49,7 +49,7 @@ Statuses:
 | `sendtoaddress` | Not planned | Use `z_sendfromaccount` once implemented ([#217](https://github.com/zcash/zallet/issues/217)); `z_sendmany` covers most uses today ([#67](https://github.com/zcash/zallet/issues/67)) |
 | `settxfee` | Omitted | [ZIP 317](https://zips.z.cash/zip-0317) fees are always used |
 | `signmessage` | Not yet implemented | [#68](https://github.com/zcash/zallet/issues/68) |
-| `walletconfirmbackup` | Not planned | Internal `zcashd` method not intended to be called directly (related: [#201](https://github.com/zcash/zallet/issues/201)) |
+| `walletconfirmbackup` | Not planned | Internal `zcashd` method not intended to be called directly; use the [`zallet confirm-backup`](../cli/confirm-backup.md) command instead |
 | `z_converttex` | Implemented | |
 | `z_exportkey` | Implemented | |
 | `z_exportviewingkey` | Not yet implemented | Planned as UFVK/UIVK export ([#70](https://github.com/zcash/zallet/issues/70)) |

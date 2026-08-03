@@ -116,7 +116,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use bip0039::{English, Mnemonic};
-use rusqlite::named_params;
+use rusqlite::{OptionalExtension, named_params};
 use secrecy::{ExposeSecret, SecretString, SecretVec, Zeroize};
 use subtle::ConstantTimeEq;
 use tokio::{
@@ -151,6 +151,44 @@ pub(crate) use error::KeystoreError;
 pub(crate) mod zewif;
 
 type RelockTask = (SystemTime, JoinHandle<()>);
+
+/// Whether the wallet operator is known to hold a copy of a mnemonic phrase outside the
+/// wallet, at the moment Zallet stores that phrase.
+///
+/// This is not a claim about the quality of the operator's backup, which Zallet cannot
+/// observe. It distinguishes a phrase that has provably passed through the operator's
+/// hands from one that has only ever existed inside this wallet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BackupStatus {
+    /// The operator supplied this phrase, and so must already have had it to hand.
+    Confirmed,
+
+    /// Zallet is the only place this phrase is known to exist. Spend authority will not
+    /// be derived from its seed until the operator confirms having recorded it, unless
+    /// `keystore.require_backup` is disabled.
+    Unconfirmed,
+}
+
+impl BackupStatus {
+    fn is_confirmed(self) -> bool {
+        matches!(self, BackupStatus::Confirmed)
+    }
+}
+
+/// Why [`KeyStore::select_seed`] could not choose a mnemonic seed to act on.
+pub(crate) enum SeedSelectionError {
+    /// Reading the wallet's seeds failed.
+    Database(Error),
+
+    /// The wallet holds no mnemonic phrases at all.
+    NoSeeds,
+
+    /// The wallet holds several phrases and the caller named none of them.
+    Ambiguous,
+
+    /// The caller named a fingerprint the wallet does not hold.
+    Unknown,
+}
 
 #[derive(Clone)]
 pub(crate) struct KeyStore {
@@ -588,9 +626,17 @@ impl KeyStore {
         .await
     }
 
+    /// Stores `mnemonic` in the keystore, encrypted to the wallet's age recipients.
+    ///
+    /// `backup` records whether the operator is already known to hold this phrase; see
+    /// [`BackupStatus`]. Storing a phrase the keystore already holds leaves the existing
+    /// ciphertext in place, but a [`BackupStatus::Confirmed`] store still confirms it:
+    /// re-supplying a phrase Zallet generated demonstrates possession just as
+    /// [`Self::confirm_backup`] does. Confirmation is never withdrawn by a later store.
     pub(crate) async fn encrypt_and_store_mnemonic(
         &self,
         mnemonic: Mnemonic,
+        backup: BackupStatus,
     ) -> Result<SeedFingerprint, Error> {
         let encryptor = self.encryptor().await?;
 
@@ -605,11 +651,13 @@ impl KeyStore {
         self.with_db_mut(|conn, _| {
             conn.execute(
                 "INSERT INTO ext_zallet_keystore_mnemonics
-                VALUES (:hd_seed_fingerprint, :encrypted_mnemonic)
-                ON CONFLICT (hd_seed_fingerprint) DO NOTHING ",
+                VALUES (:hd_seed_fingerprint, :encrypted_mnemonic, :backup_confirmed)
+                ON CONFLICT (hd_seed_fingerprint) DO UPDATE
+                SET backup_confirmed = backup_confirmed OR excluded.backup_confirmed ",
                 named_params! {
                     ":hd_seed_fingerprint": seed_fp.to_bytes(),
                     ":encrypted_mnemonic": encrypted_mnemonic,
+                    ":backup_confirmed": backup.is_confirmed(),
                 },
             )
             .map_err(|e| ErrorKind::Generic.context(e))?;
@@ -618,6 +666,86 @@ impl KeyStore {
         .await?;
 
         Ok(seed_fp)
+    }
+
+    /// Returns `true` if the operator is known to hold a copy of the mnemonic phrase for
+    /// the given seed outside the wallet.
+    ///
+    /// A seed the keystore has no mnemonic for is reported as unconfirmed: there is no
+    /// phrase for the operator to have backed up, so no basis on which to say they have.
+    pub(crate) async fn backup_confirmed(&self, seed_fp: &SeedFingerprint) -> Result<bool, Error> {
+        self.with_db(|conn, _| {
+            Ok(conn
+                .query_row(
+                    "SELECT backup_confirmed
+                    FROM ext_zallet_keystore_mnemonics
+                    WHERE hd_seed_fingerprint = :hd_seed_fingerprint",
+                    named_params! {":hd_seed_fingerprint": seed_fp.to_bytes()},
+                    |row| row.get::<_, bool>(0),
+                )
+                .optional()
+                .map_err(|e| ErrorKind::Generic.context(e))?
+                .unwrap_or(false))
+        })
+        .await
+    }
+
+    /// Chooses which of the wallet's mnemonic seeds an operation should act on.
+    ///
+    /// A wallet holding exactly one phrase needs no fingerprint; otherwise the caller must
+    /// name one, because Zallet will not pick a root of spend authority on the operator's
+    /// behalf.
+    pub(crate) async fn select_seed(
+        &self,
+        seedfp: Option<SeedFingerprint>,
+    ) -> Result<SeedFingerprint, SeedSelectionError> {
+        let seed_fps = self
+            .list_seed_fingerprints()
+            .await
+            .map_err(SeedSelectionError::Database)?;
+
+        match (seed_fps.len(), seedfp) {
+            (0, _) => Err(SeedSelectionError::NoSeeds),
+            (_, Some(seed_fp)) => seed_fps
+                .contains(&seed_fp)
+                .then_some(seed_fp)
+                .ok_or(SeedSelectionError::Unknown),
+            (1, None) => Ok(seed_fps.into_iter().next().expect("present")),
+            (_, None) => Err(SeedSelectionError::Ambiguous),
+        }
+    }
+
+    /// Records that the operator holds a copy of the mnemonic phrase for the given seed.
+    ///
+    /// The caller is responsible for having established that: this writes the conclusion,
+    /// it does not check it. See the `confirm-backup` command.
+    ///
+    /// Returns an error if the keystore holds no mnemonic with this fingerprint.
+    pub(crate) async fn confirm_backup(&self, seed_fp: &SeedFingerprint) -> Result<(), Error> {
+        let rows = self
+            .with_db_mut(|conn, _| {
+                let rows = conn
+                    .execute(
+                        "UPDATE ext_zallet_keystore_mnemonics
+                        SET backup_confirmed = TRUE
+                        WHERE hd_seed_fingerprint = :hd_seed_fingerprint",
+                        named_params! {":hd_seed_fingerprint": seed_fp.to_bytes()},
+                    )
+                    .map_err(|e| ErrorKind::Generic.context(e))?;
+                Ok(rows)
+            })
+            .await?;
+
+        if rows == 0 {
+            return Err(ErrorKind::Generic
+                .context(fl!(
+                    "err-keystore-no-such-mnemonic",
+                    seedfp = seed_fp.to_string(),
+                ))
+                .into());
+        }
+
+        Ok(())
     }
 
     #[cfg(feature = "zcashd-import")]
@@ -759,7 +887,10 @@ impl KeyStore {
     }
 
     /// Decrypts the mnemonic phrase corresponding to the given seed fingerprint.
-    async fn decrypt_mnemonic(&self, seed_fp: &SeedFingerprint) -> Result<SecretString, Error> {
+    pub(crate) async fn decrypt_mnemonic(
+        &self,
+        seed_fp: &SeedFingerprint,
+    ) -> Result<SecretString, Error> {
         // Acquire a read lock on the identities for decryption.
         let identities = self.identities.read().await;
         if identities.is_empty() {
@@ -1301,17 +1432,206 @@ fn decrypt_standalone_transparent_privkey(
     Ok(secret_key)
 }
 
+/// Helpers for building a real keystore in unit tests.
+///
+/// Lives here rather than in each test module because a keystore needs a wallet database
+/// and an age identity on disk, which is more setup than is worth repeating.
+#[cfg(test)]
+pub(crate) mod testing {
+    use std::io::Write;
+
+    use bip0039::{English, Mnemonic};
+    use tempfile::TempDir;
+    use zcash_protocol::consensus::NetworkType;
+
+    use super::KeyStore;
+    use crate::{components::database::Database, config::ZalletConfig};
+
+    /// Builds a keystore backed by a fresh wallet database and a fresh age identity.
+    ///
+    /// `configure` may adjust the config before the keystore reads it, for tests that
+    /// depend on a config-derived policy such as `keystore.require_backup`.
+    pub(crate) async fn keystore_with_config(
+        datadir: &TempDir,
+        configure: impl FnOnce(&mut ZalletConfig),
+    ) -> KeyStore {
+        crate::i18n::load_languages(&[]);
+
+        let identity = age::x25519::Identity::generate();
+        let identity_path = datadir.path().join("encryption-identity.txt");
+        let mut identity_file = std::fs::File::create(&identity_path).unwrap();
+        writeln!(
+            identity_file,
+            "{}",
+            age::secrecy::ExposeSecret::expose_secret(&identity.to_string()),
+        )
+        .unwrap();
+        drop(identity_file);
+
+        let mut config = ZalletConfig {
+            datadir: Some(datadir.path().to_path_buf()),
+            consensus: crate::config::ConsensusSection {
+                network: NetworkType::Test,
+                ..Default::default()
+            },
+            keystore: crate::config::KeyStoreSection {
+                encryption_identity: Some(identity_path),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        configure(&mut config);
+
+        let db = Database::open(&config).await.unwrap();
+        let keystore = KeyStore::new(&config, db).unwrap();
+        keystore
+            .initialize_recipients(vec![identity.to_public().to_string()])
+            .await
+            .unwrap();
+
+        keystore
+    }
+
+    /// Builds a keystore with the default configuration.
+    pub(crate) async fn keystore(datadir: &TempDir) -> KeyStore {
+        keystore_with_config(datadir, |_| {}).await
+    }
+
+    /// Builds a deterministic mnemonic phrase from fixed entropy.
+    pub(crate) fn phrase(entropy: [u8; 32]) -> Mnemonic {
+        Mnemonic::<English>::from_entropy(entropy).expect("valid entropy")
+    }
+
+    /// Runs an async test body on a multi-threaded runtime.
+    pub(crate) fn run_async<F: Future>(f: impl FnOnce() -> F) -> F::Output {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(f())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use bip0039::{English, Mnemonic};
     use proptest::prelude::*;
     use secrecy::SecretString;
+    use tempfile::tempdir;
     use zip32::fingerprint::SeedFingerprint;
 
     use super::{
-        KeystoreError, canonicalize_recipients_file, mnemonic_matches_fingerprint,
+        BackupStatus, KeystoreError, canonicalize_recipients_file, mnemonic_matches_fingerprint,
         seed_matches_fingerprint,
+        testing::{keystore as test_keystore, phrase, run_async},
     };
+
+    #[test]
+    fn generated_mnemonics_start_unconfirmed_and_confirm_once() {
+        let datadir = tempdir().unwrap();
+
+        run_async(|| async {
+            let keystore = test_keystore(&datadir).await;
+
+            let seed_fp = keystore
+                .encrypt_and_store_mnemonic(phrase([0; 32]), BackupStatus::Unconfirmed)
+                .await
+                .unwrap();
+            assert!(
+                !keystore.backup_confirmed(&seed_fp).await.unwrap(),
+                "a phrase Zallet generated has not been backed up by anyone yet",
+            );
+
+            keystore.confirm_backup(&seed_fp).await.unwrap();
+            assert!(keystore.backup_confirmed(&seed_fp).await.unwrap());
+        });
+    }
+
+    #[test]
+    fn imported_mnemonics_are_confirmed_on_arrival() {
+        let datadir = tempdir().unwrap();
+
+        run_async(|| async {
+            let keystore = test_keystore(&datadir).await;
+
+            let seed_fp = keystore
+                .encrypt_and_store_mnemonic(phrase([1; 32]), BackupStatus::Confirmed)
+                .await
+                .unwrap();
+
+            assert!(
+                keystore.backup_confirmed(&seed_fp).await.unwrap(),
+                "the operator typed this phrase in, so they already hold it",
+            );
+        });
+    }
+
+    #[test]
+    fn re_importing_a_generated_mnemonic_confirms_it() {
+        let datadir = tempdir().unwrap();
+
+        run_async(|| async {
+            let keystore = test_keystore(&datadir).await;
+
+            // Zallet generates the phrase...
+            let seed_fp = keystore
+                .encrypt_and_store_mnemonic(phrase([2; 32]), BackupStatus::Unconfirmed)
+                .await
+                .unwrap();
+            assert!(!keystore.backup_confirmed(&seed_fp).await.unwrap());
+
+            // ... and the operator later types it back in, which demonstrates that they
+            // hold it just as reading it back to `confirm-backup` would.
+            let reimported = keystore
+                .encrypt_and_store_mnemonic(phrase([2; 32]), BackupStatus::Confirmed)
+                .await
+                .unwrap();
+
+            assert_eq!(reimported.to_bytes(), seed_fp.to_bytes());
+            assert!(keystore.backup_confirmed(&seed_fp).await.unwrap());
+        });
+    }
+
+    #[test]
+    fn storing_a_confirmed_mnemonic_again_does_not_unconfirm_it() {
+        let datadir = tempdir().unwrap();
+
+        run_async(|| async {
+            let keystore = test_keystore(&datadir).await;
+
+            let seed_fp = keystore
+                .encrypt_and_store_mnemonic(phrase([3; 32]), BackupStatus::Confirmed)
+                .await
+                .unwrap();
+
+            keystore
+                .encrypt_and_store_mnemonic(phrase([3; 32]), BackupStatus::Unconfirmed)
+                .await
+                .unwrap();
+
+            assert!(
+                keystore.backup_confirmed(&seed_fp).await.unwrap(),
+                "confirmation must never be withdrawn by a later store",
+            );
+        });
+    }
+
+    #[test]
+    fn a_seed_with_no_mnemonic_is_never_reported_as_backed_up() {
+        let datadir = tempdir().unwrap();
+
+        run_async(|| async {
+            let keystore = test_keystore(&datadir).await;
+
+            let absent = SeedFingerprint::from_bytes([9; 32]);
+
+            assert!(!keystore.backup_confirmed(&absent).await.unwrap());
+            keystore
+                .confirm_backup(&absent)
+                .await
+                .expect_err("there is no phrase here to have been backed up");
+        });
+    }
 
     proptest! {
         #[test]

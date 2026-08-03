@@ -11,7 +11,7 @@ use crate::components::{
         server::LegacyCode,
         utils::{ensure_wallet_is_unlocked, parse_seedfp_parameter},
     },
-    keystore::KeyStore,
+    keystore::{KeyStore, SeedSelectionError},
     sync::WalletDecryptorHandle,
 };
 
@@ -43,8 +43,6 @@ pub(crate) async fn call<C: Chain>(
     seedfp: Option<&str>,
 ) -> Response {
     ensure_wallet_is_unlocked(keystore).await?;
-    // TODO: Ensure wallet is backed up.
-    //       https://github.com/zcash/zallet/issues/201
 
     let seedfp = seedfp.map(parse_seedfp_parameter).transpose()?;
 
@@ -79,21 +77,16 @@ pub(crate) async fn call<C: Chain>(
 
     let birthday = AccountBirthday::from_parts(chain_state, None);
 
-    let seed_fps = keystore
-        .list_seed_fingerprints()
-        .await
-        .map_err(|e| LegacyCode::Database.with_message(e.to_string()))?;
-
-    let seed_fp = match (seed_fps.len(), seedfp) {
-        (0, _) => Err(LegacyCode::Wallet
-            .with_static("Wallet does not contain any seeds to generate accounts with")),
-        (1, None) => Ok(seed_fps.into_iter().next().expect("present")),
-        (_, None) => Err(LegacyCode::InvalidParameter
-            .with_static("Wallet has more than one seed; seedfp argument must be provided")),
-        (_, Some(seedfp)) => seed_fps.contains(&seedfp).then_some(seedfp).ok_or_else(|| {
+    let seed_fp = keystore.select_seed(seedfp).await.map_err(|e| match e {
+        SeedSelectionError::Database(e) => LegacyCode::Database.with_message(e.to_string()),
+        SeedSelectionError::NoSeeds => LegacyCode::Wallet
+            .with_static("Wallet does not contain any seeds to generate accounts with"),
+        SeedSelectionError::Ambiguous => LegacyCode::InvalidParameter
+            .with_static("Wallet has more than one seed; seedfp argument must be provided"),
+        SeedSelectionError::Unknown => {
             LegacyCode::InvalidParameter.with_static("seedfp does not match any seed in the wallet")
-        }),
-    }?;
+        }
+    })?;
 
     let seed = keystore
         .decrypt_seed(&seed_fp)
