@@ -5,6 +5,10 @@
 The command takes the UUID of the account for which the mnemonic should be exported. You
 can obtain this from a running Zallet wallet with `zallet rpc z_listaccounts`.
 
+Exporting decrypts the stored phrase in order to re-encrypt it for output, so it needs the
+wallet's age encryption identity. If that identity file is passphrase-encrypted, you will
+be prompted for the passphrase.
+
 The mnemonic is encrypted to the same `age` identity that the wallet uses to internally
 encrypt key material. Decrypting the exported file therefore requires that same identity
 file (and its passphrase, if it is passphrase-encrypted): the encrypted mnemonic is not a

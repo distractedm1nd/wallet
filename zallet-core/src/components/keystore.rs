@@ -377,6 +377,31 @@ impl KeyStore {
         Ok(())
     }
 
+    /// Unlocks the keystore for the remainder of the current process, prompting on the
+    /// terminal for the identity file's passphrase if it has one.
+    ///
+    /// This is for one-shot CLI commands, whose process exits long before any re-lock
+    /// timeout would matter; a long-running `zallet start` should use [`Self::unlock`]
+    /// instead, so that the identities do not stay in memory indefinitely.
+    ///
+    /// Does nothing if the keystore's identity file is not passphrase-encrypted, since
+    /// its identities are already loaded.
+    pub(crate) async fn unlock_on_terminal(&self) -> Result<(), Error> {
+        let identity_file = match self
+            .decrypt_identity_file(age::cli_common::UiCallbacks)
+            .await?
+        {
+            Some(identity_file) => identity_file,
+            None => return Ok(()),
+        };
+
+        *self.identities.write().await = identity_file
+            .into_identities()
+            .map_err(|e| ErrorKind::Generic.context(e))?;
+
+        Ok(())
+    }
+
     /// Clears the in-memory cache of age identities, locking the keystore.
     pub(crate) async fn lock(&self) {
         // If the keystore isn't encrypted, we don't want to clear the cached identities.

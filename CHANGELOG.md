@@ -162,6 +162,12 @@ be considered breaking changes.
   task complete a full iteration without ever polling its abort status, leaving
   `zallet` spinning at full CPU after a sibling task failure. A backend whose
   every view operation awaits real I/O is unaffected.
+- `export-mnemonic` now prompts for the passphrase of a passphrase-encrypted
+  encryption identity instead of failing with “Wallet is locked”. Such wallets
+  could not export a mnemonic at all: there is no unlock command, and
+  `walletpassphrase` unlocks a running server’s identities rather than this
+  process’s, which cannot run concurrently with it in any case. The regtest
+  account command is fixed the same way.
 
 ## [0.1.0-beta.2] - 2026-07-28
 

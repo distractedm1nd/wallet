@@ -31,6 +31,13 @@ impl AsyncRunnable for ExportMnemonicCmd {
             .key_derivation()
             .ok_or_else(|| ErrorKind::Generic.context(fl!("err-account-no-payment-source")))?;
 
+        // Exporting decrypts the stored phrase in order to check that the fingerprint actually
+        // matches the one used for lookup.
+        //
+        // Deliberately after the account has been resolved, so that naming an account the
+        // wallet does not hold fails without asking for a passphrase first.
+        keystore.unlock_on_terminal().await?;
+
         let encrypted_mnemonic = keystore
             .export_mnemonic(derivation.seed_fingerprint(), self.armor)
             .await?;

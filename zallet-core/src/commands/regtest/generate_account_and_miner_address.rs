@@ -47,6 +47,8 @@ impl AsyncRunnable for GenerateAccountAndMinerAddressCmd {
                 .context("This regtest API is not supported with multiple seeds")
                 .into()),
             (Some(seed_fp), None) => {
+                keystore.unlock_on_terminal().await?;
+
                 let seed = keystore.decrypt_seed(&seed_fp).await?;
 
                 // We should use the regtest block hash here, but we also know that the
