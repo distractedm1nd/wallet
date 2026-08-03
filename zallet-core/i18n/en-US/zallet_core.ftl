@@ -33,6 +33,7 @@
 -legacy_pool_seed_fingerprint = legacy_pool_seed_fingerprint
 -zallet_toml = zallet.toml
 
+-cfg-keystore-require-backup = keystore.require_backup
 -cfg-rpc-auth = rpc.auth
 -cfg-rpc-auth-password = rpc.auth.password
 -cfg-rpc-auth-pwhash = rpc.auth.pwhash
@@ -61,6 +62,11 @@ cmd-generate-encryption-identity-passphrase-confirm = Confirm passphrase:
 cmd-generate-encryption-identity-passphrase-mismatch = Passphrases do not match
 cmd-generate-encryption-identity-passphrase-empty = Passphrase must not be empty; an empty passphrase would leave the identity effectively unencrypted.
 cmd-generate-encryption-identity-passphrase-file-failed = Failed to read passphrase from {$path}: {$error}
+
+cmd-generate-mnemonic-confirm-backup-next =
+    This phrase exists nowhere but this wallet. Run '{-zallet} confirm-backup' to record
+    it somewhere durable; until you do, {-zallet} will not derive accounts or addresses
+    from it.
 
 cmd-confirm-backup-already-confirmed = This phrase’s backup has already been confirmed.
 cmd-confirm-backup-how-to-obtain =
@@ -238,6 +244,9 @@ err-seed-selection-unknown-seedfp =
 
 ## Backup confirmation errors
 
+err-backup-not-confirmed =
+    The backup of this wallet's mnemonic phrase has not been confirmed. Run
+    '{-zallet} confirm-backup' first, or set '{-cfg-keystore-require-backup}' to false.
 err-confirm-backup-wrong-word =
     That is not the word at this position in the phrase. The backup has NOT been
     confirmed; check your written copy and run this command again.

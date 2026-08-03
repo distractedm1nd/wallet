@@ -203,6 +203,10 @@ pub(crate) struct KeyStore {
 
     /// Task that will re-lock the keystore if it has been temporarily unlocked.
     relock_task: Arc<Mutex<Option<RelockTask>>>,
+
+    /// Whether a mnemonic's backup must be confirmed before Zallet will derive new spend
+    /// authority from its seed.
+    require_backup: bool,
 }
 
 impl fmt::Debug for KeyStore {
@@ -286,6 +290,7 @@ impl KeyStore {
             encrypted_identities,
             identities: Arc::new(RwLock::new(identities)),
             relock_task: Arc::new(Mutex::new(None)),
+            require_backup: config.require_backup(),
         })
     }
 
@@ -713,6 +718,12 @@ impl KeyStore {
             (1, None) => Ok(seed_fps.into_iter().next().expect("present")),
             (_, None) => Err(SeedSelectionError::Ambiguous),
         }
+    }
+
+    /// Returns `true` if new spend authority must not be derived from the given seed,
+    /// because the operator has not confirmed that they hold its mnemonic phrase.
+    pub(crate) async fn backup_required(&self, seed_fp: &SeedFingerprint) -> Result<bool, Error> {
+        Ok(self.require_backup && !self.backup_confirmed(seed_fp).await?)
     }
 
     /// Records that the operator holds a copy of the mnemonic phrase for the given seed.
@@ -1612,6 +1623,57 @@ mod tests {
             assert!(
                 keystore.backup_confirmed(&seed_fp).await.unwrap(),
                 "confirmation must never be withdrawn by a later store",
+            );
+        });
+    }
+
+    #[test]
+    fn backup_is_required_only_while_unconfirmed_and_the_policy_is_on() {
+        let datadir = tempdir().unwrap();
+
+        run_async(|| async {
+            let keystore = test_keystore(&datadir).await;
+
+            let seed_fp = keystore
+                .encrypt_and_store_mnemonic(phrase([4; 32]), BackupStatus::Unconfirmed)
+                .await
+                .unwrap();
+
+            assert!(
+                keystore.backup_required(&seed_fp).await.unwrap(),
+                "an unconfirmed phrase must block derivation while the policy is on",
+            );
+
+            keystore.confirm_backup(&seed_fp).await.unwrap();
+            assert!(
+                !keystore.backup_required(&seed_fp).await.unwrap(),
+                "confirming must unblock derivation",
+            );
+        });
+    }
+
+    #[test]
+    fn backup_is_never_required_when_the_policy_is_off() {
+        let datadir = tempdir().unwrap();
+
+        run_async(|| async {
+            let keystore = super::testing::keystore_with_config(&datadir, |config| {
+                config.keystore.require_backup = Some(false);
+            })
+            .await;
+
+            let seed_fp = keystore
+                .encrypt_and_store_mnemonic(phrase([5; 32]), BackupStatus::Unconfirmed)
+                .await
+                .unwrap();
+
+            assert!(
+                !keystore.backup_confirmed(&seed_fp).await.unwrap(),
+                "the phrase is still unconfirmed; only the policy has been turned off",
+            );
+            assert!(
+                !keystore.backup_required(&seed_fp).await.unwrap(),
+                "keystore.require_backup = false must not block derivation",
             );
         });
     }

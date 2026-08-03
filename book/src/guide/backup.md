@@ -48,6 +48,16 @@ where practical, since together they grant full spending access.
 
 ### Backing up a mnemonic
 
+A phrase that Zallet generated for you exists nowhere else until you write it
+down, so Zallet asks you to confirm that you have: until you do, it will not
+derive new accounts or addresses from that phrase (see `keystore.require_backup`
+in the
+[configuration reference](../config/README.md)). Export and decrypt the phrase
+as described below, write it down, and then run
+[`zallet confirm-backup`](../cli/confirm-backup.md), which asks you to read
+three of its words back. A phrase you imported with `zallet import-mnemonic`
+needs no confirmation, since you already had it.
+
 [`zallet export-mnemonic`](../cli/export-mnemonic.md) exports the mnemonic for
 a given account. The output is **not plain text**: it is encrypted to the
 wallet's age identity, so decrypting it later requires the identity file (and

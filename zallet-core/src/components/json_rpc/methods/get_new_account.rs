@@ -9,7 +9,7 @@ use crate::components::{
     database::DbConnection,
     json_rpc::{
         server::LegacyCode,
-        utils::{ensure_wallet_is_unlocked, parse_seedfp_parameter},
+        utils::{ensure_seed_is_backed_up, ensure_wallet_is_unlocked, parse_seedfp_parameter},
     },
     keystore::{KeyStore, SeedSelectionError},
     sync::WalletDecryptorHandle,
@@ -87,6 +87,8 @@ pub(crate) async fn call<C: Chain>(
             LegacyCode::InvalidParameter.with_static("seedfp does not match any seed in the wallet")
         }
     })?;
+
+    ensure_seed_is_backed_up(keystore, &seed_fp).await?;
 
     let seed = keystore
         .decrypt_seed(&seed_fp)

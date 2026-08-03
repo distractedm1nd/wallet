@@ -43,6 +43,8 @@ impl AsyncRunnable for GenerateMnemonicCmd {
             "{}",
             fl!("cmd-seed-fingerprint", seedfp = seedfp.to_string())
         );
+        println!();
+        println!("{}", fl!("cmd-generate-mnemonic-confirm-backup-next"));
 
         Ok(())
     }

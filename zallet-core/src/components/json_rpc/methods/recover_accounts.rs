@@ -12,7 +12,7 @@ use crate::components::{
     database::DbConnection,
     json_rpc::{
         server::LegacyCode,
-        utils::{ensure_wallet_is_unlocked, parse_seedfp_parameter},
+        utils::{ensure_seed_is_backed_up, ensure_wallet_is_unlocked, parse_seedfp_parameter},
     },
     keystore::KeyStore,
     sync::WalletDecryptorHandle,
@@ -59,8 +59,6 @@ pub(crate) async fn call<C: Chain>(
     accounts: Vec<AccountParameter<'_>>,
 ) -> Response {
     ensure_wallet_is_unlocked(keystore).await?;
-    // TODO: Ensure wallet is backed up.
-    //       https://github.com/zcash/zallet/issues/201
 
     let chain_view = chain
         .snapshot()
@@ -109,6 +107,8 @@ pub(crate) async fn call<C: Chain>(
     let mut seeds = HashMap::new();
     for (_, seed_fp, _, _) in &account_args {
         if !seeds.contains_key(seed_fp) {
+            ensure_seed_is_backed_up(keystore, seed_fp).await?;
+
             let seed = keystore
                 .decrypt_seed(seed_fp)
                 .await

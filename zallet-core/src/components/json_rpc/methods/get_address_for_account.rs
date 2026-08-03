@@ -6,6 +6,8 @@ use jsonrpsee::{
 use schemars::JsonSchema;
 use serde::Serialize;
 use zcash_address::unified;
+#[cfg(zallet_build = "wallet")]
+use zcash_client_backend::data_api::{Account as _, WalletRead};
 use zcash_client_backend::{
     data_api::WalletWrite,
     keys::{AddressGenerationError, ReceiverRequirement, UnifiedAddressRequest},
@@ -21,7 +23,7 @@ use crate::components::{
 };
 
 #[cfg(zallet_build = "wallet")]
-use crate::components::keystore::KeyStore;
+use crate::components::{json_rpc::utils::ensure_seed_is_backed_up, keystore::KeyStore};
 
 /// Response to a `z_getaddressforaccount` RPC request.
 pub(crate) type Response = RpcResult<ResultType>;
@@ -68,6 +70,28 @@ pub(crate) async fn call(
         &account,
     )
     .await?;
+
+    // Deriving a fresh address invites new funds into the account, so it is gated on the
+    // account's seed having a confirmed backup just as account creation is.
+    //
+    // Since accounts can no longer be created from an unconfirmed seed at all, in practice
+    // this catches new usage of accounts that already existed before that gate was added:
+    // a wallet whose phrase Zallet generated, and whose operator never recorded it.
+    // Accounts with no key derivation (an imported viewing key, say) are not covered by
+    // any mnemonic, so there is nothing to have backed up and nothing to check.
+    #[cfg(zallet_build = "wallet")]
+    if let Some(seed_fp) = wallet
+        .get_account(account_id)
+        .map_err(|e| LegacyCode::Database.with_message(e.to_string()))?
+        .and_then(|account| {
+            account
+                .source()
+                .key_derivation()
+                .map(|derivation| *derivation.seed_fingerprint())
+        })
+    {
+        ensure_seed_is_backed_up(&keystore, &seed_fp).await?;
+    }
 
     let (receiver_types, request) = match receiver_types {
         Some(receiver_types) if !receiver_types.is_empty() => {

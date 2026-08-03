@@ -309,10 +309,20 @@ as_of_version = "0.1.0-beta.2"
 # replace all backslashes `/` with forward slashes `/`.
 #encryption_identity = "encryption-identity.txt"
 
-# By default, the wallet will not allow generation of new spending keys & addresses
-# from the mnemonic seed until the backup of that seed has been confirmed with the
-# `zcashd-wallet-tool` utility. A user may start zallet with `--walletrequirebackup=false`
-# to allow generation of spending keys even if the backup has not yet been confirmed.
+# By default, the wallet will not derive new accounts from a mnemonic seed phrase it
+# generated, or new addresses within accounts already derived from it, until the
+# operator has confirmed a backup of that phrase with the `zallet confirm-backup`
+# command. A user may set this to `false` to allow derivation from a phrase whose
+# backup has not yet been confirmed.
+#
+# A phrase the operator imported themselves needs no confirmation; they necessarily
+# had it to hand in order to import it.
+#
+# **The default depends on the network.** It is `true` on mainnet and testnet, and
+# `false` on regtest — matching `zcashd`, which set `fRequireWalletBackup = false`
+# in its regtest chain parameters. A regtest wallet is disposable, and confirming a
+# backup is interactive, so requiring it would leave automated tests with no way
+# through. Set this explicitly if you want the same behaviour on every network.
 #require_backup = true
 
 

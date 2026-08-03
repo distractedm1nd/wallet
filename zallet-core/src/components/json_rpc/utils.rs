@@ -60,6 +60,32 @@ pub(super) async fn ensure_wallet_is_unlocked(keystore: &KeyStore) -> RpcResult<
     }
 }
 
+/// Returns an error if new spend authority must not be derived from the given seed
+/// because the operator has not confirmed that they hold its mnemonic phrase.
+///
+/// A phrase Zallet generated exists nowhere but this wallet until the operator records it
+/// somewhere durable, so funds sent to addresses derived from it before then are lost with
+/// the wallet. `keystore.require_backup` governs whether that is refused or merely true.
+#[cfg(zallet_build = "wallet")]
+pub(super) async fn ensure_seed_is_backed_up(
+    keystore: &KeyStore,
+    seed_fp: &SeedFingerprint,
+) -> RpcResult<()> {
+    let required = keystore
+        .backup_required(seed_fp)
+        .await
+        .map_err(|e| LegacyCode::Database.with_message(e.to_string()))?;
+
+    if required {
+        Err(LegacyCode::WalletBackupRequired.with_static(
+            "Error: Please acknowledge that you have backed up the wallet's emergency recovery phrase \
+             by using the zallet confirm-backup command first.",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 /// Collects the standalone (non-HD) transparent spending keys required to sign the
 /// transparent inputs of `proposal`.
 ///
@@ -598,11 +624,70 @@ mod tests {
 
     #[cfg(zallet_build = "wallet")]
     use {
-        super::{parse_fixed_point, zatoshis_from_value},
-        crate::components::json_rpc::utils::parse_seedfp_parameter,
+        super::{ensure_seed_is_backed_up, parse_fixed_point, zatoshis_from_value},
+        crate::components::{
+            json_rpc::{server::LegacyCode, utils::parse_seedfp_parameter},
+            keystore::{
+                BackupStatus,
+                testing::{keystore_with_config, phrase, run_async},
+            },
+        },
+        tempfile::tempdir,
         zcash_protocol::value::Zatoshis,
         zip32::fingerprint::SeedFingerprint,
     };
+
+    /// The gate must report exactly `zcashd`'s `RPC_WALLET_BACKUP_REQUIRED`, since
+    /// integrators inherited that code from `zcashd`.
+    #[cfg(zallet_build = "wallet")]
+    #[test]
+    fn unconfirmed_backup_is_refused_with_the_legacy_error_code() {
+        let datadir = tempdir().unwrap();
+
+        run_async(|| async {
+            let keystore = keystore_with_config(&datadir, |config| {
+                config.keystore.require_backup = Some(true);
+            })
+            .await;
+
+            let seed_fp = keystore
+                .encrypt_and_store_mnemonic(phrase([1; 32]), BackupStatus::Unconfirmed)
+                .await
+                .unwrap();
+
+            let err = ensure_seed_is_backed_up(&keystore, &seed_fp)
+                .await
+                .expect_err("an unconfirmed seed must be refused");
+            assert_eq!(err.code(), LegacyCode::WalletBackupRequired as i32);
+
+            keystore.confirm_backup(&seed_fp).await.unwrap();
+            ensure_seed_is_backed_up(&keystore, &seed_fp)
+                .await
+                .expect("a confirmed seed must be permitted");
+        });
+    }
+
+    #[cfg(zallet_build = "wallet")]
+    #[test]
+    fn the_gate_is_bypassed_when_require_backup_is_off() {
+        let datadir = tempdir().unwrap();
+
+        run_async(|| async {
+            let keystore = keystore_with_config(&datadir, |config| {
+                config.keystore.require_backup = Some(false);
+            })
+            .await;
+
+            let seed_fp = keystore
+                .encrypt_and_store_mnemonic(phrase([2; 32]), BackupStatus::Unconfirmed)
+                .await
+                .unwrap();
+
+            ensure_seed_is_backed_up(&keystore, &seed_fp)
+                .await
+                .expect("require_backup = false must permit an unconfirmed seed");
+        });
+    }
 
     #[cfg(zallet_build = "wallet")]
     #[test]
