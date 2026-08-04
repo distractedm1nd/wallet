@@ -415,14 +415,9 @@ impl MigrateZcashdWalletCmd {
                             entry.insert(height);
                         }
                     }
-                    // zcashd only records a transaction's mined height via its Orchard
-                    // note-commitment-tree position, so a transparent-only transaction
-                    // never has one even when, as here, its block hash resolves to a
-                    // known main-chain block. Without a mined height (and often also
-                    // without an expiry height, which many historical transactions
-                    // lack), `zcash_client_sqlite` cannot determine a consensus branch
-                    // id and fails the import outright instead of deferring to the
-                    // post-import rescan. Backfill it from the resolution above.
+                    // zcashd tracks mined height only via Orchard tree position, so
+                    // transparent txs never get one; without it, storing them below can
+                    // fail with "Consensus branch ID not known". Backfill it here.
                     if tx.mined_height().is_none()
                         && let Some(height) = block_heights.get(&block_hash)
                     {
