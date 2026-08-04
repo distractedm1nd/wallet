@@ -282,7 +282,7 @@ impl MigrateZcashdWalletCmd {
             NetworkType::Regtest => Some(derive_regtest_activations(&network_params)),
             NetworkType::Main | NetworkType::Test => None,
         };
-        let document = zewif_zcashd::migrate_to_zewif(
+        let mut document = zewif_zcashd::migrate_to_zewif(
             &wallet,
             zewif::BlockHeight::from_u32(u32::from(export_height)),
             regtest_activations,
@@ -405,7 +405,8 @@ impl MigrateZcashdWalletCmd {
         // heights; the importer will schedule a rescan from there.
         let (birthday_chain_state, recover_until) = if let Some(chain_view) = chain_view.as_ref() {
             let mut block_heights = HashMap::new();
-            for tx in document.transactions().values() {
+            let mut mined_heights_to_backfill = Vec::new();
+            for (txid, tx) in document.transactions() {
                 if let Some(position) = tx.block_position() {
                     let block_hash = BlockHash(*position.block_hash().as_bytes());
                     if let Entry::Vacant(entry) = block_heights.entry(block_hash) {
@@ -414,6 +415,25 @@ impl MigrateZcashdWalletCmd {
                             entry.insert(height);
                         }
                     }
+                    // zcashd only records a transaction's mined height via its Orchard
+                    // note-commitment-tree position, so a transparent-only transaction
+                    // never has one even when, as here, its block hash resolves to a
+                    // known main-chain block. Without a mined height (and often also
+                    // without an expiry height, which many historical transactions
+                    // lack), `zcash_client_sqlite` cannot determine a consensus branch
+                    // id and fails the import outright instead of deferring to the
+                    // post-import rescan. Backfill it from the resolution above.
+                    if tx.mined_height().is_none()
+                        && let Some(height) = block_heights.get(&block_hash)
+                    {
+                        mined_heights_to_backfill.push((*txid, *height));
+                    }
+                }
+            }
+            for (txid, height) in mined_heights_to_backfill {
+                if let Some(mut tx) = document.get_transaction(txid).cloned() {
+                    tx.set_mined_height(zewif::BlockHeight::from_u32(u32::from(height)));
+                    document.add_transaction(txid, tx);
                 }
             }
             info!(
