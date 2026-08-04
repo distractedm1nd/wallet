@@ -40,6 +40,17 @@ be considered breaking changes.
 - `getwalletstatus` now reports a `locked` field indicating whether the wallet
   is currently usable.
 
+### Fixed
+
+- The queue of asynchronous RPC operations (`z_sendmany`, `z_shieldcoinbase`)
+  is now bounded (GHSA-3wr9-v982-59fj). Finished operations are still retained
+  until collected with `z_getoperationresult`, but once the queue reaches its
+  limit (configurable via `rpc.async_operation_limit`, default 1000), the
+  oldest finished operations are evicted to make room, and new operations are
+  rejected while the queue is full of unfinished operations. Previously the
+  queue was unbounded, allowing an authenticated caller to exhaust wallet
+  memory by starting operations without collecting their results.
+
 ## [0.1.0-beta.2] - 2026-07-28
 
 ### Added

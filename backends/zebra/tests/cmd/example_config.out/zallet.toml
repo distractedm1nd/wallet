@@ -337,6 +337,17 @@ as_of_version = "0.1.0-beta.2"
 #
 [rpc]
 
+# The maximum number of asynchronous RPC operations (e.g. `z_sendmany`) that can
+# be queued at once.
+#
+# Finished operations are retained in the queue until their results are collected
+# with `z_getoperationresult`, or until they are evicted (oldest first) to make
+# room for a new operation. New operations are rejected while the queue is full
+# of unfinished operations.
+#
+# Setting this to 0 disables the affected RPC methods entirely.
+#async_operation_limit = 1000
+
 # Addresses to listen for JSON-RPC connections.
 #
 # Note: The RPC server is disabled by default. To enable the RPC server, set a
