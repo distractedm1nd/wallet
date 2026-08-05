@@ -418,6 +418,16 @@ impl KeyStore {
         &self,
         recipient_strings: Vec<String>,
     ) -> Result<(), Error> {
+        // Validate up front so a malformed or empty recipient set fails initialization
+        // with a clear error, instead of being stored and then breaking the wallet at
+        // the first attempt to encrypt key material.
+        if recipient_strings.is_empty() {
+            return Err(ErrorKind::Generic
+                .context(KeystoreError::EmptyRecipients)
+                .into());
+        }
+        Encryptor::parse_recipient_strings(recipient_strings.clone())?;
+
         let now = ::time::OffsetDateTime::now_utc();
 
         self.with_db_mut(|conn, _| {
@@ -961,6 +971,27 @@ impl KeyStore {
     }
 }
 
+/// Canonicalizes the contents of an age recipients file into bare recipient strings.
+///
+/// The age recipients-file format permits blank lines and `#`-prefixed comments; neither
+/// is a recipient, so both are dropped rather than stored. `@`-prefixed entries are
+/// rejected: they denote indirection through an external source, which would make the
+/// effective recipient set depend on state outside the stored set itself.
+pub(crate) fn canonicalize_recipients_file(contents: &str) -> Result<Vec<String>, KeystoreError> {
+    contents
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| {
+            if line.starts_with('@') {
+                Err(KeystoreError::RecipientIndirection(line.into()))
+            } else {
+                Ok(line.into())
+            }
+        })
+        .collect()
+}
+
 pub(crate) struct Encryptor {
     recipient_strings: Vec<String>,
     recipients: Vec<Box<dyn age::Recipient + Send>>,
@@ -1252,7 +1283,10 @@ mod tests {
     use secrecy::SecretString;
     use zip32::fingerprint::SeedFingerprint;
 
-    use super::{mnemonic_matches_fingerprint, seed_matches_fingerprint};
+    use super::{
+        KeystoreError, canonicalize_recipients_file, mnemonic_matches_fingerprint,
+        seed_matches_fingerprint,
+    };
 
     proptest! {
         #[test]
@@ -1312,6 +1346,43 @@ mod tests {
         let phrase = SecretString::new("not a mnemonic".into());
         assert!(
             mnemonic_matches_fingerprint(&phrase, &SeedFingerprint::from_bytes([0; 32])).is_err()
+        );
+    }
+
+    #[test]
+    fn recipients_file_canonicalization_keeps_only_recipient_lines() {
+        let contents =
+            "# created: 2026-08-04\n\nage1first\n   \t\n  age1second  \n# trailing comment";
+        assert_eq!(
+            canonicalize_recipients_file(contents),
+            Ok(vec!["age1first".into(), "age1second".into()]),
+        );
+    }
+
+    #[test]
+    fn recipients_file_canonicalization_handles_crlf() {
+        let contents = "# comment\r\nage1first\r\n\r\nage1second\r\n";
+        assert_eq!(
+            canonicalize_recipients_file(contents),
+            Ok(vec!["age1first".into(), "age1second".into()]),
+        );
+    }
+
+    #[test]
+    fn recipients_file_canonicalization_of_only_comments_is_empty() {
+        assert_eq!(
+            canonicalize_recipients_file("# nothing here\n\n"),
+            Ok(vec![]),
+        );
+    }
+
+    #[test]
+    fn recipients_file_canonicalization_rejects_indirection() {
+        assert_eq!(
+            canonicalize_recipients_file("age1first\n  @/etc/age/recipients.txt\n"),
+            Err(KeystoreError::RecipientIndirection(
+                "@/etc/age/recipients.txt".into()
+            )),
         );
     }
 }

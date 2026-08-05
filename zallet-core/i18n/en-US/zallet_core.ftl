@@ -192,6 +192,10 @@ err-config-backend-mismatch = The config file selects the '{$configured}' chain 
 err-keystore-missing-recipients = The wallet has not been set up to store key material securely.
 rec-keystore-missing-recipients = Have you run '{$init_cmd}'?
 err-keystore-already-initialized = Keystore age recipients already initialized
+err-keystore-empty-recipients = No age recipients were derived from the encryption identity file.
+err-keystore-recipient-indirection =
+    Refusing to store the age recipient entry '{$entry}': '@'-prefixed indirection is not
+    supported in the wallet's recipient set.
 err-keystore-key-material-mismatch =
     Decrypted key material does not match the fingerprint it is stored under. The wallet
     database is corrupted or has been tampered with.

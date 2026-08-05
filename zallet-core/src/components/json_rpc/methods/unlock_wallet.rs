@@ -37,5 +37,10 @@ pub(crate) async fn call(keystore: &KeyStore, passphrase: SecretString, timeout:
         Err(KeystoreError::MissingRecipients) => Err(LegacyCode::WalletWrongEncState.with_static(
             "Error: running with an unencrypted wallet, but walletpassphrase was called.",
         )),
+        // Recipient-initialization errors cannot occur while unlocking, but map them
+        // faithfully in case that ever changes.
+        Err(e @ (KeystoreError::EmptyRecipients | KeystoreError::RecipientIndirection(_))) => {
+            Err(LegacyCode::Wallet.with_message(format!("Error: {e}")))
+        }
     }
 }

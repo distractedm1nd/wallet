@@ -3,7 +3,10 @@ use abscissa_core::Runnable;
 use crate::{
     cli::InitWalletEncryptionCmd,
     commands::AsyncRunnable,
-    components::{database::Database, keystore::KeyStore},
+    components::{
+        database::Database,
+        keystore::{KeyStore, canonicalize_recipients_file},
+    },
     error::{Error, ErrorKind},
     fl,
     prelude::*,
@@ -46,16 +49,17 @@ impl AsyncRunnable for InitWalletEncryptionCmd {
         }
         .map_err(|e| ErrorKind::Generic.context(e))?;
 
-        // Write out a recipients file, then parse it back into recipient strings.
+        // Write out a recipients file, then canonicalize it back into bare recipient
+        // strings. The file format permits comments and blank lines, which must not be
+        // stored as recipients.
         let mut recipients = vec![];
         identity_file
             .write_recipients_file(&mut recipients)
             .map_err(|e| ErrorKind::Generic.context(e))?;
-        let recipient_strings = String::from_utf8(recipients)
-            .map_err(|e| ErrorKind::Generic.context(e))?
-            .lines()
-            .map(String::from)
-            .collect();
+        let recipient_strings = canonicalize_recipients_file(
+            &String::from_utf8(recipients).map_err(|e| ErrorKind::Generic.context(e))?,
+        )
+        .map_err(|e| ErrorKind::Generic.context(e))?;
 
         // Store the recipients in the keystore.
         keystore.initialize_recipients(recipient_strings).await
