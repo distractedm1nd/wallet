@@ -1367,7 +1367,8 @@ pub(super) async fn verify_and_broadcast_transactions<C: Chain, FeeRuleT, NoteRe
         transactions.push(tx);
     }
 
-    if APP.config().external.broadcast() {
+    let broadcast = APP.config().external.broadcast();
+    if broadcast {
         for tx in &transactions {
             chain.broadcast_transaction(tx).await.map_err(|e| {
                 LegacyCode::Wallet
@@ -1376,7 +1377,7 @@ pub(super) async fn verify_and_broadcast_transactions<C: Chain, FeeRuleT, NoteRe
         }
     }
 
-    Ok(SendResult::new(txids))
+    Ok(SendResult::new(txids, broadcast))
 }
 
 /// The result of sending a payment.
@@ -1389,12 +1390,24 @@ pub(crate) struct SendResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     txid: Option<String>,
 
-    /// The IDs of the sent transactions resulting from the payment.
+    /// The IDs of the transactions resulting from the payment.
+    ///
+    /// These are created and recorded in the wallet regardless of whether they were
+    /// broadcast; see [`SendResult::broadcast`].
     txids: Vec<String>,
+
+    /// Whether the transactions were submitted to the network.
+    ///
+    /// `false` when the `external.broadcast` config option is disabled: the
+    /// transactions were built and recorded in the wallet, marking their inputs
+    /// pending-spent, but never sent. Nothing else in this response distinguishes that
+    /// from a completed send, so a client that treats a successful operation as "the
+    /// payment is on its way" must check this field.
+    broadcast: bool,
 }
 
 impl SendResult {
-    fn new(txids: Vec<TxId>) -> Self {
+    fn new(txids: Vec<TxId>, broadcast: bool) -> Self {
         let txids = txids
             .into_iter()
             .map(|txid| txid.to_string())
@@ -1403,6 +1416,7 @@ impl SendResult {
         Self {
             txid: (txids.len() == 1).then(|| txids.first().expect("present").clone()),
             txids,
+            broadcast,
         }
     }
 }
