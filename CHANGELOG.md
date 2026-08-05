@@ -42,6 +42,15 @@ be considered breaking changes.
 
 ### Fixed
 
+- `init-wallet-encryption` now canonicalizes the age recipients derived from
+  the identity file before storing them, and validates that the resulting set
+  is non-empty and parseable. Previously every line of the internally generated
+  recipients file was stored verbatim as a recipient; the format permits
+  comments and blank lines, and a stray entry would only surface as an error
+  the first time the wallet tried to encrypt key material (e.g. during
+  `generate-mnemonic`) rather than failing initialization. `@`-prefixed
+  recipient entries are rejected, as indirection through external sources
+  cannot be part of the wallet's stored recipient set.
 - The queue of asynchronous RPC operations (`z_sendmany`, `z_shieldcoinbase`)
   is now bounded (GHSA-3wr9-v982-59fj). Finished operations are still retained
   until collected with `z_getoperationresult`, but once the queue reaches its

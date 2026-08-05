@@ -28,6 +28,11 @@ macro_rules! wlnfl {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum KeystoreError {
     MissingRecipients,
+    /// The recipient set the keystore was asked to initialize with is empty.
+    EmptyRecipients,
+    /// An age recipients file contained an `@`-prefixed indirection entry, which cannot
+    /// be stored as a recipient.
+    RecipientIndirection(String),
     /// The provided passphrase did not decrypt the keystore's age identities.
     IncorrectPassphrase,
     /// The requested unlock timeout is large enough that the re-lock deadline would
@@ -47,6 +52,14 @@ impl fmt::Display for KeystoreError {
                         "zallet -d {} init-wallet-encryption",
                         APP.config().datadir().display()
                     )
+                )
+            }
+            Self::EmptyRecipients => wfl!(f, "err-keystore-empty-recipients"),
+            Self::RecipientIndirection(entry) => {
+                wfl!(
+                    f,
+                    "err-keystore-recipient-indirection",
+                    entry = entry.as_str()
                 )
             }
             Self::IncorrectPassphrase => wfl!(f, "err-keystore-incorrect-passphrase"),
