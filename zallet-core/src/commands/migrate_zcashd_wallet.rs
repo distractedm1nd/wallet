@@ -10,7 +10,10 @@ use zcash_client_backend::data_api::{
     Account as _, AccountSource, WalletRead, WalletWrite as _, chain::ChainState,
 };
 use zcash_client_sqlite::error::SqliteClientError;
-use zcash_client_sqlite::zewif::{DiscardSecrets, SecretSink, ZewifImportError, ZewifImportReport};
+use zcash_client_sqlite::zewif::{
+    AccountSkipReason, DiscardSecrets, SecretSink, SkippedAccount, SkippedTransparentKey,
+    TransparentKeySkipReason, ZewifImportError, ZewifImportReport,
+};
 use zcash_primitives::block::BlockHash;
 use zcash_protocol::consensus::{BlockHeight, NetworkType, NetworkUpgrade, Parameters};
 use zewif_zcashd::{BDBDump, EncryptedKeyPolicy, ZcashdDump, ZcashdParser, ZcashdWallet};
@@ -75,6 +78,7 @@ impl MigrateZcashdWalletCmd {
             chain,
             wallet,
             self.allow_multiple_wallet_imports,
+            self.allow_partial_import,
         )
         .await?;
 
@@ -206,6 +210,7 @@ impl MigrateZcashdWalletCmd {
         chain: Option<C>,
         wallet: ZcashdWallet,
         allow_multiple_wallet_imports: bool,
+        allow_partial_import: bool,
     ) -> Result<(), MigrateError> {
         let mut db_data = db.handle().await?;
         let network_params = *db_data.params();
@@ -554,6 +559,16 @@ impl MigrateZcashdWalletCmd {
             );
         }
 
+        // Evaluated only after the accounts that did import are fully set up
+        // (including the watch-only pubkey registration above), so that a failure
+        // here never leaves committed accounts in a half-configured state.
+        let document_account_count = document
+            .wallets()
+            .iter()
+            .map(|wallet| wallet.accounts().len())
+            .sum();
+        check_import_report(&report, document_account_count, allow_partial_import)?;
+
         print_backup_reminder();
 
         Ok(())
@@ -766,6 +781,77 @@ fn log_import_report(report: &ZewifImportReport) {
     }
 }
 
+/// Evaluates a ZeWIF import report against the number of accounts in the source
+/// document, failing the migration when accounts or spending material were left
+/// behind.
+///
+/// An import that creates no accounts from a document that contains some is
+/// always an error. Skipped accounts and unregistered transparent spending keys
+/// are errors unless partial imports are explicitly permitted; they concern
+/// spendable material that would otherwise silently remain only in the source
+/// `wallet.dat`. Representability limits that do not involve spendable key
+/// material (unrepresentable watch-only redeem scripts, transactions without
+/// raw data) remain warnings.
+fn check_import_report(
+    report: &ZewifImportReport,
+    document_account_count: usize,
+    allow_partial_import: bool,
+) -> Result<(), MigrateError> {
+    if document_account_count > 0 && report.imported_accounts.is_empty() {
+        return Err(MigrateError::NothingImported {
+            document_account_count,
+        });
+    }
+    let material_left_behind =
+        !report.skipped_accounts.is_empty() || !report.skipped_transparent_keys.is_empty();
+    if material_left_behind && !allow_partial_import {
+        return Err(MigrateError::PartialImport {
+            skipped_accounts: report.skipped_accounts.clone(),
+            skipped_transparent_keys: report.skipped_transparent_keys.clone(),
+        });
+    }
+    Ok(())
+}
+
+/// Renders the items a partial import left behind, one per line, for inclusion
+/// in the [`MigrateError::PartialImport`] message.
+fn describe_skipped_items(
+    skipped_accounts: &[SkippedAccount],
+    skipped_transparent_keys: &[SkippedTransparentKey],
+) -> String {
+    skipped_accounts
+        .iter()
+        .map(|skipped| match skipped.reason {
+            AccountSkipReason::SproutViewingKey => fl!(
+                "migrate-wallet-skipped-account-sprout",
+                name = skipped.name.as_str()
+            ),
+            AccountSkipReason::TransparentAddressSetWithoutSeed => fl!(
+                "migrate-wallet-skipped-account-no-seed",
+                name = skipped.name.as_str()
+            ),
+        })
+        .chain(
+            skipped_transparent_keys
+                .iter()
+                .map(|skipped| match skipped.reason {
+                    TransparentKeySkipReason::UncompressedPubKey => {
+                        fl!("migrate-wallet-skipped-key-uncompressed")
+                    }
+                    TransparentKeySkipReason::NoOwningAccount => fl!(
+                        "migrate-wallet-skipped-key-no-account",
+                        address = skipped
+                            .address
+                            .clone()
+                            .unwrap_or_else(|| fl!("migrate-wallet-unknown-address"))
+                    ),
+                }),
+        )
+        .map(|item| format!("  - {item}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 impl Runnable for MigrateZcashdWalletCmd {
     fn run(&self) {
         self.run_on_runtime();
@@ -798,6 +884,13 @@ pub(crate) enum MigrateError {
     Database(SqliteClientError),
     MultiImportDisabled,
     DuplicateImport(SeedFingerprint),
+    NothingImported {
+        document_account_count: usize,
+    },
+    PartialImport {
+        skipped_accounts: Vec<SkippedAccount>,
+        skipped_transparent_keys: Vec<SkippedTransparentKey>,
+    },
 }
 
 impl From<MigrateError> for Error {
@@ -867,6 +960,19 @@ impl From<MigrateError> for Error {
                     seed_fp = format!("{}", seed_fingerprint)
                 )))
             }
+            MigrateError::NothingImported {
+                document_account_count,
+            } => Error::from(ErrorKind::Generic.context(fl!(
+                "err-migrate-wallet-nothing-imported",
+                account_count = document_account_count.to_string()
+            ))),
+            MigrateError::PartialImport {
+                skipped_accounts,
+                skipped_transparent_keys,
+            } => Error::from(ErrorKind::Generic.context(fl!(
+                "err-migrate-wallet-partial-import",
+                skipped = describe_skipped_items(&skipped_accounts, &skipped_transparent_keys)
+            ))),
         }
     }
 }
@@ -899,11 +1005,18 @@ impl From<ChainError> for MigrateError {
 mod tests {
     use incrementalmerkletree::{Position, frontier::Frontier};
     use orchard::tree::MerkleHashOrchard;
+    use zcash_client_sqlite::{
+        AccountUuid,
+        zewif::{
+            AccountSkipReason, BirthdayBasis, ImportedAccount, SkippedAccount,
+            SkippedTransparentKey, TransparentKeySkipReason, ZewifImportReport,
+        },
+    };
     use zcash_protocol::consensus::{BlockHeight, NetworkType};
 
     use super::{
-        MigrateError, MigrateZcashdWalletCmd, ZCASHD_LEGACY_ACCOUNT_INDEX, enriched_document,
-        to_zewif_frontier,
+        MigrateError, MigrateZcashdWalletCmd, ZCASHD_LEGACY_ACCOUNT_INDEX, check_import_report,
+        describe_skipped_items, enriched_document, to_zewif_frontier,
     };
 
     fn node(byte: u8) -> MerkleHashOrchard {
@@ -959,6 +1072,137 @@ mod tests {
             }
             zewif::Frontier::Empty => panic!("frontier should be non-empty"),
         }
+    }
+
+    fn imported_account(name: &str) -> ImportedAccount {
+        ImportedAccount {
+            name: name.into(),
+            account_uuid: AccountUuid::from_uuid(uuid::Uuid::nil()),
+            birthday_basis: BirthdayBasis::ChainState,
+        }
+    }
+
+    fn skipped_account(name: &str) -> SkippedAccount {
+        SkippedAccount {
+            name: name.into(),
+            reason: AccountSkipReason::SproutViewingKey,
+        }
+    }
+
+    fn skipped_transparent_key() -> SkippedTransparentKey {
+        SkippedTransparentKey {
+            address: Some("t1ExampleAddress".into()),
+            reason: TransparentKeySkipReason::NoOwningAccount,
+        }
+    }
+
+    #[test]
+    fn empty_import_from_nonempty_document_is_a_hard_error() {
+        let report = ZewifImportReport::default();
+        for allow_partial_import in [false, true] {
+            assert!(matches!(
+                check_import_report(&report, 1, allow_partial_import),
+                Err(MigrateError::NothingImported {
+                    document_account_count: 1
+                })
+            ));
+        }
+    }
+
+    #[test]
+    fn empty_import_from_empty_document_is_not_an_error() {
+        assert!(check_import_report(&ZewifImportReport::default(), 0, false).is_ok());
+    }
+
+    #[test]
+    fn skipped_accounts_fail_without_allow_partial_import() {
+        let report = ZewifImportReport {
+            imported_accounts: vec![imported_account("imported")],
+            skipped_accounts: vec![skipped_account("sprout")],
+            ..Default::default()
+        };
+        assert!(matches!(
+            check_import_report(&report, 2, false),
+            Err(MigrateError::PartialImport { .. })
+        ));
+        assert!(check_import_report(&report, 2, true).is_ok());
+    }
+
+    #[test]
+    fn skipped_transparent_keys_fail_without_allow_partial_import() {
+        let report = ZewifImportReport {
+            imported_accounts: vec![imported_account("imported")],
+            skipped_transparent_keys: vec![skipped_transparent_key()],
+            ..Default::default()
+        };
+        assert!(matches!(
+            check_import_report(&report, 1, false),
+            Err(MigrateError::PartialImport { .. })
+        ));
+        assert!(check_import_report(&report, 1, true).is_ok());
+    }
+
+    #[test]
+    fn all_skipped_report_fails_hard_despite_allow_partial_import() {
+        let report = ZewifImportReport {
+            skipped_accounts: vec![skipped_account("sprout")],
+            ..Default::default()
+        };
+        assert!(matches!(
+            check_import_report(&report, 1, true),
+            Err(MigrateError::NothingImported {
+                document_account_count: 1
+            })
+        ));
+    }
+
+    #[test]
+    fn describe_skipped_items_renders_accounts_and_keys() {
+        crate::i18n::load_languages(&[]);
+        let skipped_accounts = vec![
+            SkippedAccount {
+                name: "sprout account".into(),
+                reason: AccountSkipReason::SproutViewingKey,
+            },
+            SkippedAccount {
+                name: "bare taddrs".into(),
+                reason: AccountSkipReason::TransparentAddressSetWithoutSeed,
+            },
+        ];
+        let skipped_transparent_keys = vec![
+            SkippedTransparentKey {
+                address: None,
+                reason: TransparentKeySkipReason::UncompressedPubKey,
+            },
+            SkippedTransparentKey {
+                address: Some("t1ExampleAddress".into()),
+                reason: TransparentKeySkipReason::NoOwningAccount,
+            },
+            SkippedTransparentKey {
+                address: None,
+                reason: TransparentKeySkipReason::NoOwningAccount,
+            },
+        ];
+        let rendered = describe_skipped_items(&skipped_accounts, &skipped_transparent_keys);
+        // One bulleted item per skipped account or key.
+        assert_eq!(rendered.matches("  - ").count(), 5);
+        assert!(rendered.starts_with("  - "));
+        assert!(rendered.contains("'sprout account'"));
+        assert!(rendered.contains("'bare taddrs'"));
+        assert!(rendered.contains("'t1ExampleAddress'"));
+        assert!(rendered.contains("unknown address"));
+    }
+
+    #[test]
+    fn clean_report_passes() {
+        let report = ZewifImportReport {
+            imported_accounts: vec![imported_account("imported")],
+            // Representability limits do not fail the migration.
+            redeem_scripts_not_representable: 2,
+            transactions_without_raw_data: 3,
+            ..Default::default()
+        };
+        assert!(check_import_report(&report, 1, false).is_ok());
     }
 
     fn test_document() -> (zewif::Zewif, zewif::SeedFingerprint, zewif::SeedFingerprint) {

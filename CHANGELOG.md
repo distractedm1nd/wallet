@@ -39,6 +39,10 @@ be considered breaking changes.
   (default 100).
 - `getwalletstatus` now reports a `locked` field indicating whether the wallet
   is currently usable.
+- `migrate-zcashd-wallet --allow-partial-import` flag, permitting a migration
+  to complete even when some accounts or transparent spending keys in the
+  `zcashd` wallet could not be imported. The skipped items are reported as
+  warnings; they remain accessible only via the original `wallet.dat` file.
 
 ### Fixed
 
@@ -59,6 +63,15 @@ be considered breaking changes.
   rejected while the queue is full of unfinished operations. Previously the
   queue was unbounded, allowing an authenticated caller to exhaust wallet
   memory by starting operations without collecting their results.
+- `migrate-zcashd-wallet` now fails instead of exiting successfully when the
+  import leaves wallet material behind. A migration that imports no accounts at
+  all from a wallet that contains some is always an error; a migration that
+  skips some accounts or transparent spending keys is an error unless the new
+  `--allow-partial-import` flag is passed. The partial-import error enumerates
+  what was left behind; both errors note that the skipped material exists only
+  in the original `wallet.dat` file. Previously these outcomes were logged as
+  warnings and the command exited 0, so a wallet that migrated nothing looked
+  like a success.
 
 ## [0.1.0-beta.2] - 2026-07-28
 

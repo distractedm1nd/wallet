@@ -23,6 +23,7 @@
 -allow-beta-example = --this-is-beta-code-and-you-will-need-to-recreate-the-example-later
 -allow-beta-migration = --this-is-beta-code-and-you-will-need-to-redo-the-migration-later
 -allow-multiple-wallet-imports = --allow-multiple-wallet-imports
+-allow-partial-import = --allow-partial-import
 -datadir = --datadir
 -db_dump = db_dump
 -zcashd-install-dir = --zcashd-install-dir
@@ -421,6 +422,40 @@ err-migrate-wallet-secret-store =
     An error occurred storing wallet secrets in the keystore: '{$err}'
 err-migrate-wallet-encrypted-secrets =
     The ZeWIF document's secret material is encrypted; decrypt it before import.
+err-migrate-wallet-nothing-imported =
+    None of the accounts in the {-zcashd} wallet (it contains {$account_count})
+    could be imported: NOTHING WAS MIGRATED, and your funds remain accessible only
+    through the original `wallet.dat` file, so keep it safe. See the preceding
+    log output for the reason each account was skipped. No accounts were
+    created in the {-zallet} wallet, although the keystore may now hold key
+    material that no account references; this is harmless, and it is safe to
+    re-run this migration after addressing the cause (secrets already present
+    in the keystore are stored idempotently).
+err-migrate-wallet-partial-import =
+    The migration could not import the following; each exists ONLY in the
+    original {-zcashd} `wallet.dat` file, so keep it safe:
+    {$skipped}
+    The accounts that were imported, and their key material, have already been
+    written to the {-zallet} wallet and keystore (the keystore may also hold
+    keys for the items listed above, unreferenced by any account), so re-running
+    this migration against the same {-zallet} wallet is not supported and will
+    fail. To accept a migration that leaves this material behind,
+    redo the migration against a fresh {-zallet} wallet with the
+    {-allow-partial-import} flag.
+migrate-wallet-skipped-account-sprout =
+    account '{$name}': its viewing capability is a Sprout viewing key, and
+    {-zallet} cannot represent the Sprout pool; move any Sprout funds using
+    {-zcashd} before migrating
+migrate-wallet-skipped-account-no-seed =
+    account '{$name}': a bare set of transparent addresses with no seed from
+    which its contents could be re-derived
+migrate-wallet-skipped-key-uncompressed =
+    a transparent spending key: the recorded public key is uncompressed, and
+    {-zallet} derives addresses only from compressed public keys
+migrate-wallet-skipped-key-no-account =
+    the transparent spending key for '{$address}': its address does not appear
+    under any imported account
+migrate-wallet-unknown-address = unknown address
 
 err-ux-A = Did {-zallet} not do what you expected? Could the error be more useful?
 err-ux-B = Tell us
