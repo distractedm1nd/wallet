@@ -782,7 +782,20 @@ async fn steady_state_iteration<C: Chain>(
         }
         // The chain tip already changed since this view was captured; loop around
         // immediately to observe it.
-        None if tip_changed => (),
+        //
+        // Yield to the runtime and pause briefly before re-iterating. `snapshot`,
+        // `tip`, and `get_mempool_stream` can all return `Poll::Ready` from cached
+        // state (MockChain does, and the Zaino `FetchServiceSubscriber` was observed
+        // doing so in #136), so without this yield an aborted `steady_state` task
+        // can complete a full iteration without ever polling its abort status,
+        // spinning until the backend's view changes. The yield lets tokio observe
+        // the abort and end the task; the sleep bounds the CPU cost of a non-aborted
+        // task that is legitimately re-polling a backend serving a stale cached view
+        // (a backend contract violation, but one Zaino has been observed to exhibit).
+        None if tip_changed => {
+            tokio::task::yield_now().await;
+            time::sleep(Duration::from_millis(500)).await;
+        }
         // The chain tip has not changed, and no mempool stream is available (e.g.
         // because the chain indexer is still syncing its finalized state). Pause
         // briefly to avoid spinning.
@@ -1116,14 +1129,20 @@ mod tests {
 
     use super::{
         ChainError, PendingWalletSyncTasks, SyncError, WalletSync, is_retryable, rewind_step,
-        select_initial_scan_range,
+        select_initial_scan_range, status, steady_state,
     };
     use crate::{
-        components::{TaskHandle, chain::MockChain, database::Database},
+        components::{
+            TaskHandle,
+            chain::{ChainBlock, MockChain},
+            database::Database,
+        },
         config::ZalletConfig,
         error::{Error, ErrorKind},
     };
+    use tokio::sync::Notify;
     use zcash_client_backend::data_api::scanning::{ScanPriority, ScanRange};
+    use zcash_primitives::block::BlockHash;
     use zcash_protocol::consensus::BlockHeight;
 
     struct TaskCancellationProbe(mpsc::Sender<()>);
@@ -1235,6 +1254,7 @@ mod tests {
             .expect("creates a wallet database");
         let (decryptor, decryptor_engine) = WalletSync::build_decryptor();
         let decryptor_observer = decryptor.clone();
+        let (status, _status_reader) = status::channel(config.sync.lock_threshold());
 
         let result = WalletSync::spawn(
             &config,
@@ -1243,16 +1263,104 @@ mod tests {
             None,
             decryptor,
             decryptor_engine,
+            status,
         )
         .await;
 
         assert!(result.is_err(), "mock chain rejects wallet sync startup");
+        // `reload_keys` returns `None` only when the decryptor handle has no engine to
+        // reload, which itself indicates the engine was dropped during the failed
+        // startup. Either outcome proves the batch decryptor is not left running;
+        // assert the `Some` case explicitly, and accept `None` as equivalent shutdown.
         if let Some(reload_finished) = decryptor_observer.reload_keys().await {
             assert!(
                 reload_finished.await.is_err(),
                 "failed wallet sync startup must not leave its batch decryptor running",
             );
         }
+        // `None` means there is no engine to reload — the decryptor is already down.
+    }
+
+    // Regression for zallet#136: when a sibling task fails and `steady_state` is
+    // aborted, the task must exit at its next yield point. The `None if tip_changed`
+    // arm of `steady_state_iteration` previously returned without an intervening
+    // await, so against a `ChainView` whose `snapshot`, `tip`, and
+    // `get_mempool_stream` all return `Poll::Ready` from cached state (the in-tree
+    // `MockChain`, and the Zaino `FetchServiceSubscriber` as reported in #136), the
+    // task could complete a full iteration without ever polling its abort status and
+    // spin indefinitely. The fix inserts `tokio::task::yield_now().await` in that arm;
+    // this test asserts the aborted task now exits within a bounded time.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn aborted_steady_state_exits_when_the_backend_returns_cached_state() {
+        crate::i18n::load_languages(&[]);
+
+        let datadir = tempfile::tempdir().expect("creates temporary data directory");
+        let config = ZalletConfig {
+            datadir: Some(datadir.path().to_path_buf()),
+            ..Default::default()
+        };
+        let database = Database::open(&config)
+            .await
+            .expect("creates a wallet database");
+        let (decryptor, decryptor_engine) = WalletSync::build_decryptor();
+        // Drop the engine half; the steady-state task only needs the handle, and we
+        // do not drive batch decryption here.
+        drop(decryptor_engine);
+
+        // A MockChain whose every view operation returns `Poll::Ready`: `snapshot`
+        // and `tip` are synchronous, and `get_mempool_stream` returns `Ok(None)`.
+        // Its tip sits at height 100, while the wallet starts from height 0, so
+        // every iteration takes the `tip_changed` branch and lands in the
+        // `None if tip_changed` arm — the exact no-yield fast path from #136.
+        let chain = MockChain::reporting(Vec::new(), 100);
+        let params = config.consensus.network();
+        // The status channel is write-only here; the reader half is dropped and the
+        // steady-state task's status writes go unobserved.
+        let (status, _status_reader) = status::channel(config.sync.lock_threshold());
+
+        let mut db_data = database.handle().await.expect("opens the wallet database");
+        // `prev_tip` differs from the chain tip in height, so `tip_changed` is true;
+        // the fresh wallet has an empty block locator, so `locate_fork_point`
+        // returns `prev_tip` and no reorg rewind or block scanning occurs. The
+        // `stream_blocks_to_tip` call yields an empty stream, so the inner while
+        // loop never updates `prev_tip`, leaving `tip_changed` true on every
+        // subsequent iteration as well.
+        let prev_tip = ChainBlock::new(BlockHeight::from_u32(0), BlockHash([0xff; 32]));
+        let lower_boundary = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let tip_change_signal = std::sync::Arc::new(Notify::new());
+
+        let steady_state_task = tokio::spawn(async move {
+            steady_state(
+                chain,
+                &params,
+                db_data.as_mut(),
+                prev_tip,
+                lower_boundary,
+                tip_change_signal,
+                decryptor,
+                None,
+                status,
+            )
+            .await
+        });
+
+        // Give the task a chance to enter its loop, then abort it. Without the
+        // `yield_now().await` in the `None if tip_changed` arm, the task never
+        // yields to check its abort status and the timeout below fires.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        steady_state_task.abort();
+
+        let join_result = tokio::time::timeout(Duration::from_secs(2), steady_state_task)
+            .await
+            .expect(
+                "aborted steady_state must exit within a bounded time when the backend \
+                 returns cached state (zallet#136)",
+            );
+        // A tokio task aborted before completion joins with `Err(JoinError::Cancelled)`.
+        assert!(
+            join_result.is_err(),
+            "aborted steady_state task must not complete normally: {join_result:?}",
+        );
     }
 
     // The #636 repro: the wallet DB has recorded a higher chain tip than the current

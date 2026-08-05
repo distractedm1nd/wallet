@@ -115,6 +115,10 @@ async fn supervise_zallet_tasks(
     };
 
     info!("An ongoing Zallet task exited; cancelling the remaining tasks");
+    // Dropping `task_owner` aborts every task it owns. The task whose exit `select!`
+    // just observed is already complete, so aborting it is a no-op; the remaining
+    // siblings are cancelled. `select!` drops the loser branches' futures, but the
+    // pinned `JoinHandle`s remain live until `task_owner` is dropped here.
     drop(task_owner);
 
     result
