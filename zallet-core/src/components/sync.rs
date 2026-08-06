@@ -499,6 +499,70 @@ async fn locate_fork_point<V: ChainView>(
     .await
 }
 
+/// Resolves the block to resume scanning from after a rewind, given the height the wallet was
+/// asked to rewind to and the block it actually landed on.
+///
+/// Split out from [`truncate_to_wallet_checkpoint`] so the decision is testable without a
+/// database.
+fn resume_point(
+    requested: BlockHeight,
+    actual: Option<(BlockHeight, BlockHash)>,
+) -> Result<ChainBlock, SyncError> {
+    let (height, hash) = actual.ok_or_else(|| {
+        SyncError::Chain(ChainError::backend(format!(
+            "the wallet has no block recorded at {requested} after truncating to it",
+        )))
+    })?;
+
+    if height < requested {
+        warn!(
+            "Requested a rewind to {requested}, but the wallet could only rewind to {height} \
+             (older checkpoints have been pruned); resuming from {}",
+            height + 1,
+        );
+    }
+
+    Ok(ChainBlock::new(height, hash))
+}
+
+/// Truncates the wallet to `target`, returning the block the wallet actually ended up on.
+///
+/// [`WalletWrite::truncate_to_height`] snaps the request *down* to the highest height that is
+/// a checkpoint in every active pool's note commitment tree. Checkpoints are pruned beyond a
+/// bounded depth, retaining only periodic anchors below that, so for a rollback deeper than
+/// that window the wallet can land well below `target`.
+///
+/// Callers must resume scanning from the block this returns, not from `target`. Resuming from
+/// `target + 1` after landing lower leaves a gap in the wallet's history and applies the
+/// blocks above it onto a stale frontier, which silently diverges the wallet's note commitment
+/// tree from the chain's and only surfaces later as an unrecoverable `shardtree` conflict.
+fn truncate_to_wallet_checkpoint(
+    db_data: &mut DbConnection,
+    target: BlockHeight,
+) -> Result<ChainBlock, SyncError> {
+    let actual = match db_data.truncate_to_height(target) {
+        Ok(height) => height,
+        // No shared checkpoint at or below `target`, but the wallet told us the lowest height
+        // it can reach. Rewinding further than asked is always safe: it only means rescanning
+        // more. Rewinding *less* far is what corrupts the tree.
+        Err(SqliteClientError::RequestedRewindInvalid {
+            safe_rewind_height: Some(safe),
+            requested_height,
+        }) => {
+            warn!(
+                "The wallet cannot rewind to {requested_height}; rewinding to the lowest \
+                 available checkpoint {safe} instead",
+            );
+            db_data.truncate_to_height(safe)?
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    // `truncate_to_height` deletes `blocks` rows strictly above the height it returns, so the
+    // row at that height survives and its hash is the wallet's new tip.
+    resume_point(actual, db_data.get_block_hash(actual)?.map(|h| (actual, h)))
+}
+
 /// The next height to probe when walking back from `height` toward `birthday`, and whether
 /// that probe is the birthday floor (so the search must stop after it).
 fn rewind_step(height: BlockHeight, birthday: BlockHeight) -> (BlockHeight, bool) {
@@ -634,8 +698,11 @@ async fn steady_state<C: Chain>(
                     // Enter the recovering (safe-mode) state for the rewind and rescan;
                     // `steady_state_iteration` clears it once we reach the chain tip again.
                     status.begin_recovery(fork_point.height());
-                    db_data.truncate_to_height(fork_point.height())?;
-                    prev_tip = fork_point;
+                    // The wallet may only be able to rewind below the fork point, so resume
+                    // from wherever it actually landed.
+                    let resume_from = truncate_to_wallet_checkpoint(db_data, fork_point.height())?;
+                    status.begin_recovery(resume_from.height());
+                    prev_tip = resume_from;
                     continue;
                 }
                 return Err(error);
@@ -687,10 +754,6 @@ async fn steady_state_iteration<C: Chain>(
         let fork_point = locate_fork_point(&chain_view, db_data, *prev_tip).await?;
         assert!(fork_point.height() <= current_tip.height());
 
-        // Fetch blocks that need to be applied to the wallet.
-        let blocks_to_apply = chain_view.stream_blocks_to_tip(fork_point.height() + 1);
-        tokio::pin!(blocks_to_apply);
-
         // If the fork point is equal to `prev_tip` then no reorg has occurred.
         if fork_point != *prev_tip {
             // Ensured by `find_fork_point`.
@@ -707,9 +770,18 @@ async fn steady_state_iteration<C: Chain>(
             // Enter the recovering (safe-mode) state for the duration of the rewind and
             // rescan; it is cleared below once we reach the chain tip again.
             status.begin_recovery(fork_point.height());
-            db_data.truncate_to_height(fork_point.height())?;
-            *prev_tip = fork_point;
+            // The wallet may only be able to rewind below the fork point, so resume from
+            // wherever it actually landed rather than assuming the fork point.
+            let resume_from = truncate_to_wallet_checkpoint(db_data, fork_point.height())?;
+            status.begin_recovery(resume_from.height());
+            *prev_tip = resume_from;
         };
+
+        // Fetch blocks that need to be applied to the wallet. This must be built *after* any
+        // rewind above: the wallet can land below the fork point, and streaming from the fork
+        // point would skip the blocks in between, applying the rest onto a stale frontier.
+        let blocks_to_apply = chain_view.stream_blocks_to_tip(prev_tip.height() + 1);
+        tokio::pin!(blocks_to_apply);
 
         // Notify the wallet of block connections.
         while let Some(block) = blocks_to_apply.try_next().await.map_err(SyncError::Chain)? {
@@ -1128,8 +1200,8 @@ mod tests {
     use std::{sync::mpsc, time::Duration};
 
     use super::{
-        ChainError, PendingWalletSyncTasks, SyncError, WalletSync, is_retryable, rewind_step,
-        select_initial_scan_range, status, steady_state,
+        ChainError, PendingWalletSyncTasks, SyncError, WalletSync, is_retryable, resume_point,
+        rewind_step, select_initial_scan_range, status, steady_state,
     };
     use crate::{
         components::{
@@ -1176,6 +1248,39 @@ mod tests {
 
     fn h(height: u32) -> BlockHeight {
         BlockHeight::from_u32(height)
+    }
+
+    fn hash(seed: u8) -> BlockHash {
+        BlockHash([seed; 32])
+    }
+
+    // `truncate_to_height` snaps the requested height down to the highest height that is a
+    // checkpoint in every pool's tree, so the wallet can land below where it was asked to
+    // rewind to. Resuming from the requested height rather than the real one leaves a gap in
+    // the wallet's history and applies later blocks onto a stale frontier -- the silent
+    // divergence that only surfaces much later as an unrecoverable shardtree conflict.
+    #[test]
+    fn resume_point_uses_the_height_the_wallet_actually_reached() {
+        let resumed = resume_point(h(3_438_008), Some((h(3_434_976), hash(7)))).unwrap();
+        assert_eq!(resumed.height(), h(3_434_976));
+        assert_eq!(resumed.hash(), hash(7));
+    }
+
+    #[test]
+    fn resume_point_is_the_request_when_the_rewind_was_exact() {
+        let resumed = resume_point(h(500), Some((h(500), hash(1)))).unwrap();
+        assert_eq!(resumed.height(), h(500));
+        assert_eq!(resumed.hash(), hash(1));
+    }
+
+    // The wallet should always have a block at the height it truncated to, since truncation
+    // deletes only rows strictly above it. If it does not, resuming would fabricate a tip.
+    #[test]
+    fn resume_point_errors_when_the_wallet_has_no_block_there() {
+        assert!(matches!(
+            resume_point(h(500), None),
+            Err(SyncError::Chain(ChainError::Backend(_))),
+        ));
     }
 
     fn range(start: u32, end: u32, priority: ScanPriority) -> ScanRange {

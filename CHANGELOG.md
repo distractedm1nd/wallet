@@ -76,6 +76,18 @@ be considered breaking changes.
 
 ### Fixed
 
+- After a chain reorganization, the wallet now resumes scanning from the height
+  it actually rewound to, rather than from the fork point it asked for. Rewinding
+  the wallet can only stop at a height that is a checkpoint in every shielded
+  pool's note commitment tree, and older checkpoints are pruned, so a rollback
+  deeper than a hundred or so blocks could land well below the fork point.
+  Zallet then resumed just above the fork point regardless, skipping the blocks
+  in between and applying the rest onto a stale tree state — silently diverging
+  the wallet's note commitment tree from the chain's, which surfaced later as an
+  unrecoverable conflict. Deep reorganizations will now rescan somewhat more
+  than before, and the wallet stays in its recovering state (during which
+  balance and spend methods are unavailable) for correspondingly longer.
+
 - Fixed a wallet corruption that made sync fail permanently with a note
   commitment tree conflict, reported as
   `PutBlocksCommitmentTree { .. Insert(Conflict(..)) }`. Once a wallet reached
