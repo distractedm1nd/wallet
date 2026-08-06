@@ -76,6 +76,26 @@ be considered breaking changes.
 
 ### Fixed
 
+- Fixed a wallet corruption that made sync fail permanently with a note
+  commitment tree conflict, reported as
+  `PutBlocksCommitmentTree { .. Insert(Conflict(..)) }`. Once a wallet reached
+  this state it exited on every start and could only be recovered by rewinding
+  it manually with `zallet repair truncate-wallet`.
+
+  The cause was a chain backend reporting no note commitment tree for a block at
+  or after a shielded pool's activation height, which Zallet accepted as an
+  empty tree and stored. Nothing detected the bad data at the time it was
+  written, so the wallet's tree silently diverged from the chain's and only
+  failed later, when a correct tree state disagreed with what had been stored —
+  potentially thousands of blocks after the damage was done. Backends now report
+  such reads as a temporary failure and sync retries, rather than storing a
+  placeholder. This was most likely to affect `zallet-zebra` users whose wallets
+  crossed the NU6.3 activation height, where the Ironwood pool's tree is new.
+
+  Wallets already in this state still need `zallet repair truncate-wallet` to
+  recover; this release prevents the corruption from occurring, and does not
+  repair a wallet that has already diverged.
+
 - `init-wallet-encryption` now canonicalizes the age recipients derived from
   the identity file before storing them, and validates that the resulting set
   is non-empty and parseable. Previously every line of the internally generated

@@ -34,6 +34,7 @@ use transparent::bundle::OutPoint;
 use zallet_core::components::chain::SpendStatus;
 use zallet_core::components::chain::{
     BlockLocator, Chain, ChainBlock, ChainError, ChainFactory, ChainTx, ChainView, ReportedUpgrade,
+    TreePool, empty_tree_is_legitimate,
 };
 use zallet_core::{
     components::TaskHandle,
@@ -325,10 +326,31 @@ impl<R: ChainReader> ChainView for ZebraChainView<R> {
         let Some(hash) = self.resolve(height).await? else {
             return Ok(None);
         };
-        // For a finalized pinned hash, `None` tree bytes mean the pool was not yet active
-        // at that height (empty tree). For a non-finalized pinned hash (best-chain-only
-        // treestate lookups), `None` means the hash reorged off the best chain.
+        // For a non-finalized pinned hash (best-chain-only treestate lookups), `None` means
+        // the hash reorged off the best chain. For a finalized pinned hash, `None` means the
+        // pool was not yet active at that height — but *only* below the pool's activation
+        // height. At or above it, a missing tree is an invariant violation, and substituting
+        // an empty frontier silently corrupts the wallet's shardtree (see
+        // `ChainView::tree_state_as_of`); it must be reported as unavailable so the sync
+        // engine retries.
+        //
+        // Zebra cannot be relied on to catch this for us. `ironwood_tree_by_height` does
+        // treat a missing post-NU6.3 tree as a panic rather than masking it, but we read by
+        // *hash*, and `ironwood_tree_by_hash_or_height` resolves hash -> height first and
+        // returns `None` on failure — short-circuiting before that check ever runs.
         let pinned_finalized = height <= self.finalized_floor;
+        let missing_tree = |pool: TreePool| -> ChainError {
+            if pinned_finalized {
+                ChainError::unavailable(format!(
+                    "zebra reported no {pool} treestate at finalized height {height}, at or \
+                     after that pool's activation; refusing to substitute an empty frontier"
+                ))
+            } else {
+                ChainError::unavailable(format!("pinned {pool} treestate reorged away"))
+            }
+        };
+        let absent_tree_is_empty =
+            |pool: TreePool| pinned_finalized && empty_tree_is_legitimate(&self.params, pool, height);
 
         let final_sapling_tree = match self.reader.sapling_tree_bytes(hash).await? {
             Some(bytes) => {
@@ -337,12 +359,8 @@ impl<R: ChainReader> ChainView for ZebraChainView<R> {
                 )
                 .map_err(ChainError::invalid_data)?
             }
-            None if pinned_finalized => CommitmentTree::empty(),
-            None => {
-                return Err(ChainError::unavailable(
-                    "pinned sapling treestate reorged away",
-                ));
-            }
+            None if absent_tree_is_empty(TreePool::Sapling) => CommitmentTree::empty(),
+            None => return Err(missing_tree(TreePool::Sapling)),
         }
         .to_frontier();
 
@@ -353,17 +371,12 @@ impl<R: ChainReader> ChainView for ZebraChainView<R> {
                 { orchard::NOTE_COMMITMENT_TREE_DEPTH as u8 },
             >(&bytes[..])
             .map_err(ChainError::invalid_data)?,
-            None if pinned_finalized => CommitmentTree::empty(),
-            None => {
-                return Err(ChainError::unavailable(
-                    "pinned orchard treestate reorged away",
-                ));
-            }
+            None if absent_tree_is_empty(TreePool::Orchard) => CommitmentTree::empty(),
+            None => return Err(missing_tree(TreePool::Orchard)),
         }
         .to_frontier();
 
-        // Ironwood (NU6.3) shares the Orchard tree's shape. Zebra returns `None` for
-        // heights before NU6.3 activation, where the pool (and so its tree) is empty.
+        // Ironwood (NU6.3) shares the Orchard tree's shape.
         let final_ironwood_tree = match self.reader.ironwood_tree_bytes(hash).await? {
             Some(bytes) => read_commitment_tree::<
                 orchard::tree::MerkleHashOrchard,
@@ -371,12 +384,8 @@ impl<R: ChainReader> ChainView for ZebraChainView<R> {
                 { orchard::NOTE_COMMITMENT_TREE_DEPTH as u8 },
             >(&bytes[..])
             .map_err(ChainError::invalid_data)?,
-            None if pinned_finalized => CommitmentTree::empty(),
-            None => {
-                return Err(ChainError::unavailable(
-                    "pinned ironwood treestate reorged away",
-                ));
-            }
+            None if absent_tree_is_empty(TreePool::Ironwood) => CommitmentTree::empty(),
+            None => return Err(missing_tree(TreePool::Ironwood)),
         }
         .to_frontier();
 
@@ -760,6 +769,15 @@ mod tests {
         floor: u32,
         calls: Arc<AtomicU32>,
     ) -> ZebraChainView<MockChainReader> {
+        test_view_with_params(tip_height, floor, calls, Network::from_type(NetworkType::Main, &[]))
+    }
+
+    fn test_view_with_params(
+        tip_height: u32,
+        floor: u32,
+        calls: Arc<AtomicU32>,
+        params: Network,
+    ) -> ZebraChainView<MockChainReader> {
         let tip = ChainBlock::new(BlockHeight::from_u32(tip_height), h(tip_height));
         let mut cache = BTreeMap::new();
         cache.insert(tip.height(), tip.hash());
@@ -769,11 +787,27 @@ mod tests {
                 header_calls: calls,
             },
             validator_rpc: ValidatorRpcClient::new("127.0.0.1:1", "", "", None).unwrap(),
-            params: Network::from_type(NetworkType::Main, &[]),
+            params,
             tip,
             finalized_floor: BlockHeight::from_u32(floor),
             cache: Arc::new(Mutex::new(cache)),
         }
+    }
+
+    /// A regtest network activating NU6.3 at `height`, so the mock's small block heights can
+    /// straddle an activation boundary.
+    ///
+    /// Regtest carries an unspecified upgrade's height back from the next specified one, so
+    /// Sapling and NU5 activate at `height` too — every pool activates together. The mock
+    /// reader reports no tree bytes for any pool, so the guard trips on Sapling first; these
+    /// tests therefore prove the boundary behaviour, and
+    /// `zallet_core::components::chain::empty_tree_is_legitimate`'s own tests cover the
+    /// per-pool activation heights (including Ironwood on mainnet).
+    fn regtest_with_all_pools_at(height: u32) -> Network {
+        Network::from_type(
+            NetworkType::Regtest,
+            &[format!("37a5165b:{height}").try_into().unwrap()],
+        )
     }
 
     #[tokio::test]
@@ -814,11 +848,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tree_state_as_of_supplies_an_empty_ironwood_tree() {
-        // The mock reader returns no tree bytes, so for a finalized height every pool's
-        // final tree is empty. For Ironwood this pins the `None` fallback: Zebra returns no
-        // tree for finalized heights where the pool was not yet active (pre-NU6.3), and the
-        // chain view must map that to an empty frontier like the Sapling and Orchard reads.
+    async fn tree_state_as_of_supplies_an_empty_tree_before_activation() {
+        // The mock reader returns no tree bytes. Below a pool's activation height that is
+        // the correct answer -- the validator has no tree to report because the pool does
+        // not exist yet -- so the chain view maps it to an empty frontier. Mainnet height 3
+        // is below every pool's activation.
         let calls = Arc::new(AtomicU32::new(0));
         let view = test_view(10, 5, calls);
 
@@ -826,11 +860,63 @@ mod tests {
             .tree_state_as_of(BlockHeight::from_u32(3))
             .await
             .unwrap()
-            .expect("a finalized height with no tree bytes resolves to an empty chain state");
+            .expect("a pre-activation finalized height with no tree bytes resolves to an empty chain state");
 
         assert_eq!(state.block_height(), BlockHeight::from_u32(3));
         assert_eq!(state.final_sapling_tree().tree_size(), 0);
         assert_eq!(state.final_orchard_tree().tree_size(), 0);
         assert_eq!(state.final_ironwood_tree().tree_size(), 0);
+    }
+
+    #[tokio::test]
+    async fn tree_state_as_of_rejects_a_missing_tree_after_activation() {
+        // At or above activation a missing tree is an invariant violation, not an empty
+        // pool. Substituting an empty frontier here is what silently corrupts the wallet's
+        // shardtree: `put_blocks` cannot detect a wrong `from_state` (the scanned block's
+        // final tree size is derived from it), so the bad frontier is committed and only
+        // surfaces later as an unrecoverable `Conflict`. Report it as unavailable instead,
+        // which `is_retryable` treats as transient.
+        let calls = Arc::new(AtomicU32::new(0));
+        let view = test_view_with_params(10, 5, calls, regtest_with_all_pools_at(3));
+
+        let err = view
+            .tree_state_as_of(BlockHeight::from_u32(3))
+            .await
+            .expect_err("a missing post-activation tree must not resolve to an empty frontier");
+
+        assert!(
+            matches!(err, ChainError::Unavailable(_)),
+            "expected a retryable Unavailable error, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn tree_state_as_of_rejects_a_missing_tree_above_activation() {
+        // Guard against an off-by-one at the boundary: a height strictly above activation
+        // must be rejected too.
+        let calls = Arc::new(AtomicU32::new(0));
+        let view = test_view_with_params(10, 5, calls, regtest_with_all_pools_at(2));
+
+        let err = view
+            .tree_state_as_of(BlockHeight::from_u32(4))
+            .await
+            .expect_err("a missing post-activation tree must not resolve to an empty frontier");
+
+        assert!(matches!(err, ChainError::Unavailable(_)));
+    }
+
+    #[tokio::test]
+    async fn tree_state_as_of_still_reports_reorged_away_non_finalized_trees() {
+        // Above the finalized floor the pre-existing behaviour is unchanged: a missing tree
+        // means the pinned hash left the best chain, regardless of activation.
+        let calls = Arc::new(AtomicU32::new(0));
+        let view = test_view_with_params(10, 2, calls, regtest_with_all_pools_at(9));
+
+        let err = view
+            .tree_state_as_of(BlockHeight::from_u32(6))
+            .await
+            .expect_err("a non-finalized height with no tree bytes is unavailable");
+
+        assert!(matches!(err, ChainError::Unavailable(_)));
     }
 }
