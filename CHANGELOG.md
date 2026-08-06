@@ -76,6 +76,17 @@ be considered breaking changes.
 
 ### Fixed
 
+- A note commitment tree conflict during sync no longer shuts the wallet down
+  permanently. Zallet now rolls the wallet back to a progressively older point
+  and rescans, up to a bounded number of attempts and never below the wallet's
+  birthday. If that does not resolve it, Zallet still exits, but now says so
+  explicitly and suggests the `zallet repair truncate-wallet` height range to
+  try — rather than repeating the same conflict on every start with no
+  indication of what to do about it.
+
+  While recovering, the wallet is in its recovering state and balance and spend
+  methods are unavailable, as during a reorganization.
+
 - After a chain reorganization, the wallet now resumes scanning from the height
   it actually rewound to, rather than from the fork point it asked for. Rewinding
   the wallet can only stop at a height that is a checkpoint in every shielded

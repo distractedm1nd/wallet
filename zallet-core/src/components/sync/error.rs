@@ -20,6 +20,20 @@ pub(crate) enum SyncError {
     WalletDivergedBelowBirthday {
         birthday: BlockHeight,
     },
+    /// The wallet's note commitment tree disagrees with the chain's, and rolling the wallet
+    /// back to progressively older checkpoints did not resolve it.
+    ///
+    /// Automatic recovery is bounded so that a misdiagnosis cannot walk the wallet back to
+    /// its birthday one attempt at a time; past that bound it is a judgement call for the
+    /// operator, who may know something we do not (a bad validator, a restored backup).
+    WalletTreeDiverged {
+        /// The wallet tip at which the divergence was first observed.
+        observed_at: BlockHeight,
+        /// The height the wallet had been rolled back to when recovery gave up.
+        rolled_back_to: BlockHeight,
+        /// The wallet's birthday, the floor for any manual rewind.
+        birthday: BlockHeight,
+    },
 }
 
 impl fmt::Display for SyncError {
@@ -34,6 +48,18 @@ impl fmt::Display for SyncError {
                 f,
                 "the wallet's chain history diverges from the best chain below its birthday \
                  (height {birthday}); cannot continue syncing",
+            ),
+            SyncError::WalletTreeDiverged {
+                observed_at,
+                rolled_back_to,
+                birthday,
+            } => write!(
+                f,
+                "the wallet's note commitment tree diverges from the chain's (first seen at \
+                 height {observed_at}); rolling back as far as {rolled_back_to} did not \
+                 resolve it. Rewind the wallet further and let it rescan, with \
+                 `zallet repair truncate-wallet <height>` for a height between {birthday} \
+                 and {rolled_back_to}",
             ),
         }
     }
