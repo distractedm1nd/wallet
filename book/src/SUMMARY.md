@@ -37,6 +37,7 @@
   - [rpc](cli/rpc.md)
   - [repair](cli/repair/README.md)
     - [truncate-wallet](cli/repair/truncate-wallet.md)
+    - [check-witnesses](cli/repair/check-witnesses.md)
 - [JSON-RPC methods](rpc/README.md)
 - [Migrating from `zcashd`](zcashd/README.md)
   - [JSON-RPC method status](zcashd/rpc_status.md)

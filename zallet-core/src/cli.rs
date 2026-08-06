@@ -355,6 +355,26 @@ pub(crate) struct RpcCliCmd {
 #[cfg_attr(outside_buildscript, derive(Command, Runnable))]
 pub(crate) enum RepairCmd {
     TruncateWallet(TruncateWalletCmd),
+    CheckWitnesses(CheckWitnessesCmd),
+}
+
+/// Checks whether the wallet can construct a witness for each of its spendable notes.
+///
+/// Prints the block ranges that need rescanning to repair missing witness data, one
+/// `start..end` range per line, and prints nothing if there are none.
+///
+/// This only examines notes the wallet holds, so it cannot detect a note commitment tree that
+/// disagrees with the chain's at positions where the wallet has no note of its own. Finding
+/// nothing here does not prove the wallet's trees are sound; if `zallet start` is exiting with
+/// a note commitment tree conflict, rewind the wallet with `zallet repair truncate-wallet`.
+#[derive(Debug, Parser)]
+#[cfg_attr(outside_buildscript, derive(Command))]
+pub(crate) struct CheckWitnessesCmd {
+    /// Queue the reported ranges to be rescanned the next time the wallet syncs.
+    ///
+    /// Without this flag the command only reports, and does not modify the wallet.
+    #[arg(long)]
+    pub(crate) queue_rescan: bool,
 }
 
 /// Truncates the wallet database to at most the specified height.

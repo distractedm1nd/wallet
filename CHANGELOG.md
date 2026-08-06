@@ -52,6 +52,11 @@ be considered breaking changes.
   (default 100).
 - `getwalletstatus` now reports a `locked` field indicating whether the wallet
   is currently usable.
+- The `zallet repair check-witnesses` command, which reports the block ranges
+  that must be rescanned to rebuild missing witness data for the wallet's
+  spendable notes, and can queue them for rescanning with `--queue-rescan`.
+  Note it only examines notes the wallet holds, so a clean result does not prove
+  the wallet's note commitment trees agree with the chain's.
 - `migrate-zcashd-wallet --allow-partial-import` flag, permitting a migration
   to complete even when some accounts or transparent spending keys in the
   `zcashd` wallet could not be imported. The skipped items are reported as
