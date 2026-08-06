@@ -83,6 +83,10 @@ pub(crate) enum ZalletCmd {
     #[cfg(zallet_build = "wallet")]
     ExportMnemonic(ExportMnemonicCmd),
 
+    /// Import a transparent address into the wallet as watch-only.
+    #[cfg(all(zallet_build = "wallet", feature = "transparent-key-import"))]
+    ImportAddress(ImportAddressCmd),
+
     /// Adds a user authorization for the JSON-RPC interface.
     AddRpcUser(AddRpcUserCmd),
 
@@ -266,6 +270,39 @@ pub(crate) struct ExportMnemonicCmd {
 
     /// The UUID of the account from which to export.
     pub(crate) account_uuid: Uuid,
+}
+
+/// `import-address` subcommand
+#[cfg(all(zallet_build = "wallet", feature = "transparent-key-import"))]
+#[derive(Debug, Parser)]
+#[cfg_attr(outside_buildscript, derive(Command))]
+pub(crate) struct ImportAddressCmd {
+    /// The transparent address to watch, or the hex-encoded public key (for a
+    /// P2PKH address) or redeem script (for a P2SH address) of the address.
+    ///
+    /// An address imported by its public key or redeem script tracks the same
+    /// transactions as one imported by the bare address, and additionally allows
+    /// the wallet to be upgraded to spending capability if the corresponding
+    /// private key material is imported later.
+    pub(crate) data: String,
+
+    /// The UUID of the account to import the address into.
+    ///
+    /// By default, the address is imported into the account holding the legacy
+    /// `zcashd` pool of funds, as named by the `features.legacy_pool_seed_fingerprint`
+    /// option in the Zallet config file.
+    #[arg(short, long)]
+    pub(crate) account: Option<Uuid>,
+
+    /// Skip the rescan for the imported address's history.
+    ///
+    /// By default the command connects to the chain backend and queues a rescan
+    /// from the account's birthday, so that the next `zallet start` discovers
+    /// existing transactions involving the imported address. With this flag the
+    /// chain backend is not needed, but only transactions in blocks scanned
+    /// after the import will be detected.
+    #[arg(long)]
+    pub(crate) no_rescan: bool,
 }
 
 /// `add-rpc-user` subcommand

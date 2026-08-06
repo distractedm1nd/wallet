@@ -1098,29 +1098,49 @@ fn is_legacy_pool_account(
 /// option unset, this wallet has no legacy pool and callers that ask to spend from it are
 /// rejected.
 pub(super) fn get_legacy_pool_account(wallet: &DbConnection) -> RpcResult<Account> {
+    legacy_pool_account(wallet).map_err(|e| match e {
+        LegacyPoolError::Disabled => {
+            LegacyCode::WalletAccountsUnsupported.with_message(fl!("err-legacy-pool-disabled"))
+        }
+        LegacyPoolError::NotFound(legacy_seed_fp) => LegacyCode::Wallet.with_message(fl!(
+            "err-legacy-pool-not-found",
+            seed_fp = legacy_seed_fp.to_string(),
+        )),
+        LegacyPoolError::Db(msg) => LegacyCode::Database.with_message(msg),
+    })
+}
+
+/// The ways in which resolving the legacy `zcashd` pool account can fail.
+pub(crate) enum LegacyPoolError {
+    /// `features.legacy_pool_seed_fingerprint` is not set in the Zallet config.
+    Disabled,
+    /// No account of the wallet is the legacy account of the configured seed.
+    NotFound(SeedFingerprint),
+    /// A wallet database error occurred.
+    Db(String),
+}
+
+/// Returns the account holding the legacy `zcashd` pool of funds. See
+/// [`get_legacy_pool_account`] for the semantics; this is the transport-neutral core shared
+/// with the CLI command layer.
+pub(crate) fn legacy_pool_account(wallet: &DbConnection) -> Result<Account, LegacyPoolError> {
     let legacy_seed_fp = APP
         .config()
         .features
         .legacy_pool_seed_fingerprint
-        .ok_or_else(|| {
-            LegacyCode::WalletAccountsUnsupported.with_static(
-                "The legacy pool of funds is disabled. To enable it, set \
-                 `features.legacy_pool_seed_fingerprint` in the Zallet config file to the \
-                 seed fingerprint of the `zcashd` wallet migrated into this wallet.",
-            )
-        })?;
+        .ok_or(LegacyPoolError::Disabled)?;
 
     // TODO: Make this more efficient with a `WalletRead` method.
     //       https://github.com/zcash/librustzcash/issues/1944
     for account_id in wallet
         .get_account_ids()
-        .map_err(|e| LegacyCode::Database.with_message(e.to_string()))?
+        .map_err(|e| LegacyPoolError::Db(e.to_string()))?
     {
         let account = wallet
             .get_account(account_id)
-            .map_err(|e| LegacyCode::Database.with_message(e.to_string()))?
+            .map_err(|e| LegacyPoolError::Db(e.to_string()))?
             // This would be a race condition between this and account deletion.
-            .ok_or_else(|| LegacyCode::Database.with_static("Account vanished mid-call"))?;
+            .ok_or_else(|| LegacyPoolError::Db("Account vanished mid-call".into()))?;
 
         // Accounts imported from a UFVK have no ZIP 32 derivation, and cannot be the legacy
         // pool: `zcashd` derived the pool from the wallet's seed.
@@ -1135,10 +1155,7 @@ pub(super) fn get_legacy_pool_account(wallet: &DbConnection) -> RpcResult<Accoun
         }
     }
 
-    Err(LegacyCode::Wallet.with_message(format!(
-        "This wallet holds no legacy account for seed fingerprint {legacy_seed_fp}. Check that \
-         `features.legacy_pool_seed_fingerprint` names a `zcashd` wallet migrated into it.",
-    )))
+    Err(LegacyPoolError::NotFound(legacy_seed_fp))
 }
 
 /// Why a transparent output of a built transaction failed verification against the

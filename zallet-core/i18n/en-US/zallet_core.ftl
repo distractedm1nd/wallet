@@ -22,8 +22,10 @@
 -allow-warnings = --allow-warnings
 -allow-beta-example = --this-is-beta-code-and-you-will-need-to-recreate-the-example-later
 -allow-beta-migration = --this-is-beta-code-and-you-will-need-to-redo-the-migration-later
+-account = --account
 -allow-multiple-wallet-imports = --allow-multiple-wallet-imports
 -datadir = --datadir
+-no-rescan = --no-rescan
 -db_dump = db_dump
 -zcashd-install-dir = --zcashd-install-dir
 
@@ -207,6 +209,34 @@ err-wallet-locked = Wallet is locked
 
 err-account-not-found = Account does not exist
 err-account-no-payment-source = Account has no payment source.
+
+err-legacy-pool-disabled =
+    The legacy pool of funds is disabled. To enable it, set
+    '{-legacy_pool_seed_fingerprint}' in the Zallet config file to the seed
+    fingerprint of the {-zcashd} wallet migrated into this wallet.
+err-legacy-pool-not-found =
+    This wallet holds no legacy account for seed fingerprint {$seed_fp}. Check
+    that '{-legacy_pool_seed_fingerprint}' names a {-zcashd} wallet migrated
+    into it.
+
+## `import-address` command errors
+
+err-import-address-unrecognized =
+    Import data is not a transparent address, a hex-encoded public key, or a
+    hex-encoded redeem script.
+err-import-address-not-key-or-script =
+    Import data is not a valid public key or redeem script.
+err-import-address-legacy-disabled =
+    No legacy {-zcashd} account is configured for this wallet. Pass '{-account}' to
+    name the target account, or set '{-legacy_pool_seed_fingerprint}' in the Zallet
+    config file to the seed fingerprint of the {-zcashd} wallet migrated into it.
+err-import-address-legacy-not-found =
+    This wallet holds no legacy account for seed fingerprint {$seed_fp}. Pass
+    '{-account}' to name the target account, or check that
+    '{-legacy_pool_seed_fingerprint}' names a {-zcashd} wallet migrated into it.
+err-import-address-no-chain-state =
+    The chain state needed to queue a rescan is unavailable. Retry once the chain
+    backend has synced, or pass '{-no-rescan}' to import without a rescan.
 
 ## Transaction verification errors
 

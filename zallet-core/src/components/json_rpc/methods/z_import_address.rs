@@ -9,7 +9,7 @@ use crate::components::{chain::Chain, database::DbConnection, json_rpc::server::
 use {
     crate::components::chain::ChainView,
     crate::network::Network,
-    jsonrpsee::types::ErrorCode as RpcErrorCode,
+    jsonrpsee::types::{ErrorCode as RpcErrorCode, ErrorObjectOwned},
     secp256k1::PublicKey,
     std::collections::HashSet,
     transparent::{address::TransparentAddress, util::hash160},
@@ -27,9 +27,9 @@ pub(crate) type Response = RpcResult<ResultType>;
 pub(crate) struct ResultType {
     /// The type of address imported: "p2pkh" or "p2sh".
     #[serde(rename = "type")]
-    kind: &'static str,
+    pub(crate) kind: &'static str,
     /// The transparent address corresponding to the imported data.
-    address: String,
+    pub(crate) address: String,
 }
 
 pub(super) const PARAM_ACCOUNT_DESC: &str = "The account UUID to import the address into.";
@@ -52,7 +52,9 @@ pub(crate) async fn call<C: Chain>(
         .map_err(|_| RpcErrorCode::InvalidParams)?;
 
     // Parse the address import data, and call the appropriate import handler
-    let result = match parse_import(wallet.params(), hex_data)? {
+    let parsed =
+        parse_import(wallet.params(), hex_data).map_err(|e| parse_import_rpc_error(e, hex_data))?;
+    let result = match parsed {
         ParsedImport::P2pkh { pubkey, result } => {
             wallet
                 .import_standalone_transparent_pubkey(account_id, pubkey)
@@ -114,7 +116,7 @@ pub(crate) async fn call<C: Chain>(
 
 /// Intermediate result of parsing hex-encoded import data.
 #[cfg(feature = "transparent-key-import")]
-enum ParsedImport {
+pub(crate) enum ParsedImport {
     /// A compressed or uncompressed public key (P2PKH import).
     P2pkh {
         pubkey: PublicKey,
@@ -124,12 +126,37 @@ enum ParsedImport {
     P2sh { script: Redeem, result: ResultType },
 }
 
+/// The ways in which hex-encoded import data can fail to parse.
+#[cfg(feature = "transparent-key-import")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ParseImportError {
+    /// The import data is not valid hex.
+    InvalidHex,
+    /// The import data is neither a valid public key nor a valid redeem script.
+    NotKeyOrScript,
+}
+
+/// Maps a parse failure to the corresponding `z_importaddress` RPC error.
+#[cfg(feature = "transparent-key-import")]
+fn parse_import_rpc_error(err: ParseImportError, hex_data: &str) -> ErrorObjectOwned {
+    match err {
+        ParseImportError::InvalidHex => {
+            LegacyCode::InvalidParameter.with_static("Invalid hex encoding")
+        }
+        ParseImportError::NotKeyOrScript => LegacyCode::InvalidParameter.with_message(format!(
+            "Unrecognized input (not a valid pubkey or redeem script): {hex_data}"
+        )),
+    }
+}
+
 /// Parses hex-encoded data and classifies it as a public key (P2PKH) or redeem
 /// script (P2SH), computing the corresponding transparent address.
 #[cfg(feature = "transparent-key-import")]
-fn parse_import(params: &Network, hex_data: &str) -> RpcResult<ParsedImport> {
-    let bytes = hex::decode(hex_data)
-        .map_err(|_| LegacyCode::InvalidParameter.with_static("Invalid hex encoding"))?;
+pub(crate) fn parse_import(
+    params: &Network,
+    hex_data: &str,
+) -> Result<ParsedImport, ParseImportError> {
+    let bytes = hex::decode(hex_data).map_err(|_| ParseImportError::InvalidHex)?;
 
     // Try to parse as a public key (P2PKH import).
     if let Ok(pubkey) = PublicKey::from_slice(&bytes) {
@@ -145,11 +172,7 @@ fn parse_import(params: &Network, hex_data: &str) -> RpcResult<ParsedImport> {
         // Otherwise treat as a redeem script (P2SH import).
         let address = TransparentAddress::ScriptHash(hash160::hash(&bytes)).encode(params);
         let code = Code(bytes);
-        let script = Redeem::parse(&code).map_err(|_| {
-            LegacyCode::InvalidParameter.with_message(format!(
-                "Unrecognized input (not a valid pubkey or redeem script): {hex_data}"
-            ))
-        })?;
+        let script = Redeem::parse(&code).map_err(|_| ParseImportError::NotKeyOrScript)?;
         Ok(ParsedImport::P2sh {
             script,
             result: ResultType {
@@ -280,8 +303,10 @@ mod tests {
         let Err(err) = parse_import(&mainnet(), "not_valid_hex") else {
             panic!("Expected error for invalid hex");
         };
-        assert_eq!(err.code(), LegacyCode::InvalidParameter as i32);
-        assert_eq!(err.message(), "Invalid hex encoding");
+        assert_eq!(err, ParseImportError::InvalidHex);
+        let rpc_err = parse_import_rpc_error(err, "not_valid_hex");
+        assert_eq!(rpc_err.code(), LegacyCode::InvalidParameter as i32);
+        assert_eq!(rpc_err.message(), "Invalid hex encoding");
     }
 
     #[test]
@@ -289,7 +314,16 @@ mod tests {
         let Err(err) = parse_import(&mainnet(), "abc") else {
             panic!("Expected error for odd-length hex");
         };
-        assert_eq!(err.code(), LegacyCode::InvalidParameter as i32);
-        assert_eq!(err.message(), "Invalid hex encoding");
+        assert_eq!(err, ParseImportError::InvalidHex);
+    }
+
+    #[test]
+    fn unrecognized_input_error_names_the_input() {
+        let rpc_err = parse_import_rpc_error(ParseImportError::NotKeyOrScript, "abcd");
+        assert_eq!(rpc_err.code(), LegacyCode::InvalidParameter as i32);
+        assert_eq!(
+            rpc_err.message(),
+            "Unrecognized input (not a valid pubkey or redeem script): abcd",
+        );
     }
 }

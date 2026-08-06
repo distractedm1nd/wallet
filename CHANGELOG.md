@@ -27,6 +27,19 @@ be considered breaking changes.
 
 ### Added
 
+- `zallet import-address` CLI command for importing a transparent address as
+  watch-only, given the bare address string, its hex-encoded public key
+  (P2PKH), or its redeem script (P2SH). A bare-address import stores no key
+  material; importing the corresponding public key or redeem script later
+  upgrades it in place. The address is imported into the legacy `zcashd`
+  account (per `features.legacy_pool_seed_fingerprint`) unless `--account`
+  names another account. By default the command queues a rescan from the
+  account's birthday so the next `zallet start` discovers the address's
+  history; `--no-rescan` skips this and does not require the chain backend to
+  be reachable. This encompasses the behavior of `zcashd`'s `importaddress`
+  and of the `z_importaddress` JSON-RPC method. Funds received by an address
+  imported without key material contribute to account balances but are never
+  selected for spending.
 - A global sync lock that blocks wallet usage while Zallet’s view of the chain
   is not trustworthy. The balance and spend RPC methods (`z_getbalances`,
   `z_getbalanceforaccount`, `z_gettotalbalance`, `z_listunspent`,

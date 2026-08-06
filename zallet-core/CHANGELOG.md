@@ -21,6 +21,13 @@ should be considered breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- `ChainRuntime::run_import_address` (in wallet builds with the
+  `transparent-key-import` feature), running the chain-dependent body of the
+  new `zallet import-address` CLI command. Backend crates receive it through
+  the blanket impl over `ChainFactory` and need no changes.
+
 ### Changed
 
 - Migrated to `zcash_client_backend`/`zcash_client_sqlite` 0.24.0-rc.7 /

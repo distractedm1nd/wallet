@@ -32,6 +32,8 @@ mod export_mnemonic;
 mod generate_encryption_identity;
 #[cfg(zallet_build = "wallet")]
 mod generate_mnemonic;
+#[cfg(all(zallet_build = "wallet", feature = "transparent-key-import"))]
+mod import_address;
 #[cfg(zallet_build = "wallet")]
 mod import_mnemonic;
 #[cfg(zallet_build = "wallet")]

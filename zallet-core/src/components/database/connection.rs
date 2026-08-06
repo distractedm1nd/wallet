@@ -643,6 +643,15 @@ impl WalletWrite for DbConnection {
     }
 
     #[cfg(feature = "transparent-key-import")]
+    fn import_standalone_transparent_address(
+        &mut self,
+        account: <Self as WalletRead>::AccountId,
+        address: TransparentAddress,
+    ) -> Result<(), <Self as WalletRead>::Error> {
+        self.with_mut(|mut db_data| db_data.import_standalone_transparent_address(account, address))
+    }
+
+    #[cfg(feature = "transparent-key-import")]
     fn import_standalone_transparent_pubkey(
         &mut self,
         account: <Self as WalletRead>::AccountId,

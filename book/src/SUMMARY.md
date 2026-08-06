@@ -32,6 +32,7 @@
   - [generate-mnemonic](cli/generate-mnemonic.md)
   - [import-mnemonic](cli/import-mnemonic.md)
   - [export-mnemonic](cli/export-mnemonic.md)
+  - [import-address](cli/import-address.md)
   - [add-rpc-user](cli/add-rpc-user.md)
   - [rpc](cli/rpc.md)
   - [repair](cli/repair/README.md)

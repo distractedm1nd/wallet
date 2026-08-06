@@ -84,7 +84,7 @@ mod z_get_balance_for_account;
 #[cfg(zallet_build = "wallet")]
 mod z_get_total_balance;
 #[cfg(zallet_build = "wallet")]
-mod z_import_address;
+pub(crate) mod z_import_address;
 #[cfg(zallet_build = "wallet")]
 mod z_send_from_account;
 #[cfg(zallet_build = "wallet")]
