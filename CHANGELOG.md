@@ -146,6 +146,9 @@ be considered breaking changes.
 ### Changed
 
 - MSRV updated to 1.95.
+- Opening the wallet database now applies a schema migration adding support
+  for watch-only transparent addresses imported without key material.
+  Downgrading to an earlier Zallet release afterwards is not supported.
 - `zallet rpc help` is now answered locally instead of being sent to the
   wallet's JSON-RPC server, so it no longer requires a config file, an
   initialized wallet, or a running `zallet start`. The command argument may

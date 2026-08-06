@@ -88,6 +88,9 @@ pub(super) async fn collect_standalone_transparent_keys<NoteRef>(
         .filter_map(|(addr, metadata)| match metadata.source() {
             TransparentAddressSource::StandalonePubkey(_)
             | TransparentAddressSource::StandaloneScript(_) => Some(addr),
+            // No key material exists for an address-only import, so there is no
+            // standalone key to collect; spends from it are rejected upstream.
+            TransparentAddressSource::StandaloneAddress => None,
             TransparentAddressSource::Derived { .. } => None,
         })
         .collect();

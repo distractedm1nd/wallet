@@ -23,12 +23,17 @@ should be considered breaking changes.
 
 ### Changed
 
-- Migrated to `zcash_client_backend`/`zcash_client_sqlite` 0.24.0-rc.5 /
-  0.22.0-rc.5, which extract output-locking (`lock_outputs`, `unlock_output`,
-  `clear_locked_outputs`, `get_locked_outputs`) off `WalletWrite` into a new
-  `OutputLockStore` supertrait. Internal `DbConnection` now implements
-  `OutputLockStore` directly, alongside its existing `WalletRead`,
-  `InputSource`, `WalletWrite`, and `WalletCommitmentTrees` impls.
+- Migrated to `zcash_client_backend`/`zcash_client_sqlite` 0.24.0-rc.7 /
+  0.22.0-rc.7 (as of rc.5, output-locking — `lock_outputs`, `unlock_output`,
+  `clear_locked_outputs`, `get_locked_outputs` — is extracted off `WalletWrite`
+  into a new `OutputLockStore` supertrait; internal `DbConnection` now
+  implements `OutputLockStore` directly, alongside its existing `WalletRead`,
+  `InputSource`, `WalletWrite`, and `WalletCommitmentTrees` impls). The
+  wallet-critical librustzcash crates are temporarily consumed via a
+  `[patch.crates-io]` git pin (see the workspace `Cargo.toml`) that adds
+  `WalletWrite::import_standalone_transparent_address`
+  (zcash/librustzcash#2941); a backend workspace must carry the same patch
+  so the cohort resolves to a single source.
 
 ## [0.1.0-beta.2] - 2026-07-28
 
