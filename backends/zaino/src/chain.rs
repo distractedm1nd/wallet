@@ -55,7 +55,7 @@ use crate::read_state::{AbortOnDrop, init_read_state_service, network_to_zebra};
 use zallet_core::components::chain::SpendStatus;
 use zallet_core::components::chain::{
     BlockLocator, Chain, ChainBlock, ChainError, ChainFactory, ChainTx, ChainView, ReportedUpgrade,
-    UpgradeStatus,
+    TreePool, UpgradeStatus, empty_tree_is_legitimate,
 };
 
 /// Classifies a block-fetch error, distinguishing transient reorg-window failures from
@@ -477,8 +477,26 @@ impl ChainView for ZainoChainView {
                 .await
                 .map_err(ChainError::backend)?;
 
+            // The validator reports a pool's treestate only from that pool's activation
+            // height onward; before then it is `None` and the final tree is empty. At or
+            // after activation, `None` means the validator could not serve it. Substituting
+            // an empty frontier there silently corrupts the wallet's note commitment tree
+            // (see `ChainView::tree_state_as_of`): nothing validates the frontier, so the
+            // bad data is stored and only surfaces later, potentially thousands of blocks
+            // on, as an unrecoverable `shardtree` conflict. Report it as unavailable so the
+            // sync engine retries instead.
+            let missing_tree = |pool: TreePool| -> ChainError {
+                ChainError::unavailable(format!(
+                    "the validator reported no {pool} treestate at height {height}, at or \
+                     after that pool's activation; refusing to substitute an empty frontier"
+                ))
+            };
+            let absent_tree_is_empty =
+                |pool: TreePool| empty_tree_is_legitimate(&self.params, pool, height);
+
             let final_sapling_tree = match sapling_treestate {
-                None => CommitmentTree::empty(),
+                None if absent_tree_is_empty(TreePool::Sapling) => CommitmentTree::empty(),
+                None => return Err(missing_tree(TreePool::Sapling)),
                 Some(sapling_treestate) => read_commitment_tree::<
                     sapling::Node,
                     _,
@@ -489,7 +507,8 @@ impl ChainView for ZainoChainView {
             .to_frontier();
 
             let final_orchard_tree = match orchard_treestate {
-                None => CommitmentTree::empty(),
+                None if absent_tree_is_empty(TreePool::Orchard) => CommitmentTree::empty(),
+                None => return Err(missing_tree(TreePool::Orchard)),
                 Some(orchard_treestate) => read_commitment_tree::<
                     orchard::tree::MerkleHashOrchard,
                     _,
@@ -499,15 +518,13 @@ impl ChainView for ZainoChainView {
             }
             .to_frontier();
 
-            // Ironwood shares the Orchard tree's shape. The validator reports an
-            // Ironwood treestate only from NU6.3 activation onward; before then it is
-            // `None` and the final tree is empty. Reading the real frontier (rather than
-            // always using an empty tree) is required once Ironwood notes exist,
-            // otherwise the wallet's advancing Ironwood commitment tree conflicts with
-            // the empty checkpoint frontier and `put_blocks` fails with a
-            // `CheckpointConflict`.
+            // Ironwood shares the Orchard tree's shape. Reading the real frontier (rather
+            // than always using an empty tree) is required once Ironwood notes exist,
+            // otherwise the wallet's advancing Ironwood commitment tree conflicts with the
+            // empty checkpoint frontier and `put_blocks` fails with a `CheckpointConflict`.
             let final_ironwood_tree = match ironwood_treestate {
-                None => CommitmentTree::empty(),
+                None if absent_tree_is_empty(TreePool::Ironwood) => CommitmentTree::empty(),
+                None => return Err(missing_tree(TreePool::Ironwood)),
                 Some(ironwood_treestate) => read_commitment_tree::<
                     orchard::tree::MerkleHashOrchard,
                     _,
