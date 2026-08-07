@@ -156,6 +156,12 @@ Changes to parameters:
 Changes to response:
 - New `txids` array field in response.
 - `txid` field is omitted if `txids` has length greater than 1.
+- New `broadcast` boolean field, reporting whether the transactions were
+  submitted to the network. It is `false` when the `external.broadcast` config
+  option is disabled, in which case the transactions were built and recorded in
+  the wallet but never sent. `zcashd` had no equivalent setting, so a client
+  that treats a successful operation as "the payment is on its way" should check
+  this field.
 
 ## Omitted RPC methods
 
