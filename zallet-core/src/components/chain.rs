@@ -54,8 +54,15 @@ pub trait ChainFactory: Send + Sync + 'static {
     /// and by convention matches the `zallet-<NAME>` binary that ships the backend.
     const NAME: &'static str;
 
-    /// Connects to the chain-data source described by `config`, returning the
-    /// backend handle and the task driving its indexer.
+    /// Connects to and structurally admits the chain-data source described by `config`,
+    /// returning the backend handle and the task driving its indexer.
+    ///
+    /// `Ok` guarantees that backend-specific discovery has found every service and
+    /// capability required to implement this binary's complete [`Chain`] contract.
+    /// Factories must reject a partially usable composition with an initialization error.
+    /// This admission guarantee covers the composed service shape, not perpetual runtime
+    /// availability; individual chain operations can still fail. Consensus compatibility
+    /// is checked separately after construction.
     fn build(
         &self,
         config: &ZalletConfig,
@@ -729,6 +736,9 @@ pub enum SpendStatus {
 }
 
 #[cfg(test)]
+pub(crate) use tests::MockChain;
+
+#[cfg(test)]
 mod tests {
     use std::ops::Range;
 
@@ -764,7 +774,7 @@ mod tests {
     /// A trivial in-memory [`ChainView`], proving the trait is implementable by a non-Zaino
     /// backend and locking the contract.
     #[derive(Clone)]
-    struct MockChainView {
+    pub(crate) struct MockChainView {
         tip: ChainBlock,
     }
 
@@ -1156,15 +1166,26 @@ mod tests {
         assert!(detect(&all_known()).is_empty());
     }
 
-    /// A minimal [`Chain`] that serves a fixed upgrade set and tip on mainnet, for exercising
-    /// the end-to-end `check_consensus_compatibility` orchestration. Only `params`,
-    /// `reported_upgrades`, and `snapshot` carry meaning; the compatibility check never reaches
-    /// the other methods, so they are `unreachable!`.
+    /// A minimal [`Chain`] that serves a fixed upgrade set and tip on mainnet.
+    ///
+    /// `params`, `reported_upgrades`, and `snapshot` support consensus checks. Operations
+    /// outside that scope return a backend error, which also lets component tests exercise
+    /// startup failure after accepting this chain.
     #[derive(Clone)]
-    struct MockChain {
+    pub(crate) struct MockChain {
         params: super::Network,
         upgrades: Vec<ReportedUpgrade>,
         tip: BlockHeight,
+    }
+
+    impl MockChain {
+        pub(crate) fn reporting(upgrades: Vec<ReportedUpgrade>, tip: u32) -> Self {
+            Self {
+                params: super::Network::Consensus(Network::MainNetwork),
+                upgrades,
+                tip: BlockHeight::from_u32(tip),
+            }
+        }
     }
 
     impl Chain for MockChain {
@@ -1179,25 +1200,33 @@ mod tests {
         }
 
         async fn broadcast_transaction(&self, _tx: &Transaction) -> Result<(), ChainError> {
-            unreachable!("the compatibility check does not broadcast transactions")
+            Err(ChainError::backend(
+                "mock chain does not broadcast transactions",
+            ))
         }
 
         async fn get_sapling_subtree_roots(
             &self,
         ) -> Result<Vec<CommitmentTreeRoot<sapling::Node>>, ChainError> {
-            unreachable!("the compatibility check does not read subtree roots")
+            Err(ChainError::backend(
+                "mock chain does not serve wallet subtree roots",
+            ))
         }
 
         async fn get_orchard_subtree_roots(
             &self,
         ) -> Result<Vec<CommitmentTreeRoot<orchard::tree::MerkleHashOrchard>>, ChainError> {
-            unreachable!("the compatibility check does not read subtree roots")
+            Err(ChainError::backend(
+                "mock chain does not serve wallet subtree roots",
+            ))
         }
 
         async fn get_ironwood_subtree_roots(
             &self,
         ) -> Result<Vec<CommitmentTreeRoot<orchard::tree::MerkleHashOrchard>>, ChainError> {
-            unreachable!("the compatibility check does not read subtree roots")
+            Err(ChainError::backend(
+                "mock chain does not serve wallet subtree roots",
+            ))
         }
 
         async fn snapshot(&self) -> Result<Self::View, ChainError> {
@@ -1212,11 +1241,7 @@ mod tests {
 
     /// A [`MockChain`] on mainnet reporting `upgrades`, with its tip at `tip`.
     fn mock_chain(upgrades: Vec<ReportedUpgrade>, tip: u32) -> MockChain {
-        MockChain {
-            params: super::Network::Consensus(Network::MainNetwork),
-            upgrades,
-            tip: BlockHeight::from_u32(tip),
-        }
+        MockChain::reporting(upgrades, tip)
     }
 
     #[tokio::test]

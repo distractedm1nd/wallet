@@ -42,6 +42,10 @@ be considered breaking changes.
 
 ### Changed
 
+- `zallet start` now completes chain-backend construction and consensus checks
+  before opening or migrating the wallet database. If startup exits or is
+  cancelled, tasks started by the backend, RPC server, or wallet sync engine
+  are cancelled instead of detached.
 - The `z_sendmany`, `z_shieldcoinbase` and `z_sendfromaccount` operation results
   now include a `broadcast` field reporting whether the transactions were
   submitted to the network. It is `false` when `external.broadcast` is disabled:
@@ -72,6 +76,18 @@ be considered breaking changes.
   rejected while the queue is full of unfinished operations. Previously the
   queue was unbounded, allowing an authenticated caller to exhaust wallet
   memory by starting operations without collecting their results.
+- `zallet start` now returns a failure when a supervised runtime task returns
+  an error. Previously the first task exit was converted to a successful
+  process result, so a sync-engine or RPC crash could exit `zallet` with a zero
+  status and silently stop serving. Operators monitoring the process exit code
+  will now see the real failure.
+- The steady-state sync loop now yields to the runtime before re-iterating
+  when the chain backend reports an unchanged tip with no mempool stream.
+  Previously, a backend whose `snapshot`, `tip`, and `get_mempool_stream` all
+  return `Poll::Ready` from cached state could let an aborted `steady_state`
+  task complete a full iteration without ever polling its abort status, leaving
+  `zallet` spinning at full CPU after a sibling task failure. A backend whose
+  every view operation awaits real I/O is unaffected.
 
 ## [0.1.0-beta.2] - 2026-07-28
 
