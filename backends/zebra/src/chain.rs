@@ -349,8 +349,9 @@ impl<R: ChainReader> ChainView for ZebraChainView<R> {
                 ChainError::unavailable(format!("pinned {pool} treestate reorged away"))
             }
         };
-        let absent_tree_is_empty =
-            |pool: TreePool| pinned_finalized && empty_tree_is_legitimate(&self.params, pool, height);
+        let absent_tree_is_empty = |pool: TreePool| {
+            pinned_finalized && empty_tree_is_legitimate(&self.params, pool, height)
+        };
 
         let final_sapling_tree = match self.reader.sapling_tree_bytes(hash).await? {
             Some(bytes) => {
@@ -769,7 +770,12 @@ mod tests {
         floor: u32,
         calls: Arc<AtomicU32>,
     ) -> ZebraChainView<MockChainReader> {
-        test_view_with_params(tip_height, floor, calls, Network::from_type(NetworkType::Main, &[]))
+        test_view_with_params(
+            tip_height,
+            floor,
+            calls,
+            Network::from_type(NetworkType::Main, &[]),
+        )
     }
 
     fn test_view_with_params(
