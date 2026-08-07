@@ -46,6 +46,16 @@ be considered breaking changes.
   before opening or migrating the wallet database. If startup exits or is
   cancelled, tasks started by the backend, RPC server, or wallet sync engine
   are cancelled instead of detached.
+- The `z_sendmany`, `z_shieldcoinbase` and `z_sendfromaccount` operation results
+  now include a `broadcast` field reporting whether the transactions were
+  submitted to the network. It is `false` when `external.broadcast` is disabled:
+  the transactions are still built and recorded in the wallet (marking their
+  inputs pending-spent), but nothing else in the response distinguished that
+  from a completed send.
+- `zallet start` now warns that `external.export_dir` and `external.notify` are
+  set but not yet implemented, alongside the other not-yet-implemented options
+  it already reports. Both are accepted, documented, and migrated from `zcashd`
+  configuration, so a migrated wallet previously lost the behaviour silently.
 
 ### Fixed
 

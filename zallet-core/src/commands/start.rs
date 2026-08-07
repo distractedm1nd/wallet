@@ -153,6 +153,14 @@ impl StartCmd {
         if config.keystore.require_backup.is_some() {
             warn_unused("keystore.require_backup");
         }
+        // These are accepted, documented, and migrated from zcashd config, but nothing
+        // reads them at runtime, so a migrated wallet silently loses the behaviour.
+        if config.external.export_dir.is_some() {
+            warn_unused("external.export_dir");
+        }
+        if config.external.notify.is_some() {
+            warn_unused("external.notify");
+        }
 
         // Construct a structurally admitted chain backend before opening the wallet database.
         let (chain, chain_indexer_task_handle) = factory.build(config).await?;
