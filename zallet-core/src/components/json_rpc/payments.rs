@@ -161,6 +161,15 @@ pub(super) fn confirmations_policy_for_minconf(
 /// account's other transparent receivers. Every other source stays shielded-only, so a
 /// shielded send can never silently reach into transparent funds.
 ///
+/// A shielded source selects inputs only from the value pools its receivers name, as the
+/// `z_sendmany` documentation promises: a bare Sapling address or a Sapling-only unified
+/// address does not reach into the account's Orchard notes, and an Orchard-only unified
+/// address does not reach into its Sapling notes. An Orchard receiver corresponds to both
+/// the Orchard pool and the Ironwood pool: once Ironwood is active, payments to Orchard
+/// receivers are accounted to the Ironwood bundle, so an Orchard-receiver source must be
+/// able to draw on both. A unified address's transparent receiver deliberately does *not*
+/// permit transparent spending (see above).
+///
 /// Coinbase UTXOs are excluded: `TransparentSpendPolicy` defaults to
 /// `CoinbasePolicy::NonCoinbase`, and consensus requires coinbase to be spent to a single
 /// shielded output, which is `z_shieldcoinbase`'s job.
@@ -169,10 +178,33 @@ pub(super) fn confirmations_policy_for_minconf(
 /// proposal, and [`enforce_privacy_policy`] rejects it afterwards if it leaks more than the
 /// caller permitted.
 pub(super) fn spend_policy_for(source: &Address) -> SpendPolicy {
+    /// The pools an Orchard receiver's funds can live in.
+    const ORCHARD_RECEIVER_POOLS: [ShieldedPool; 2] =
+        [ShieldedPool::Orchard, ShieldedPool::Ironwood];
+
     match source {
         Address::Transparent(taddr) => SpendPolicy::shielded_pools([])
             .with_transparent(TransparentSpendPolicy::from_one_address(*taddr)),
-        _ => SpendPolicy::default(),
+        Address::Sapling(_) => SpendPolicy::shielded_pools([ShieldedPool::Sapling]),
+        Address::Unified(ua) => SpendPolicy::shielded_pools(
+            ua.sapling()
+                .is_some()
+                .then_some(ShieldedPool::Sapling)
+                .into_iter()
+                .chain(
+                    ua.orchard()
+                        .is_some()
+                        .then_some(ORCHARD_RECEIVER_POOLS)
+                        .into_iter()
+                        .flatten(),
+                ),
+        ),
+        // A TEX address (ZIP 320) names transparent funds held by a counterparty and
+        // cannot correspond to a wallet account, so no spend policy applies; account
+        // resolution rejects it before this is consulted. Named explicitly (rather
+        // than `_`) so that a future `Address` variant is a compile error here
+        // instead of silently receiving an empty spend policy.
+        Address::Tex(_) => SpendPolicy::shielded_pools([]),
     }
 }
 
