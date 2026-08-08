@@ -12,11 +12,12 @@ use tokio::{
 
 use crate::{
     cli::MigrateZcashConfCmd,
-    commands::AsyncRunnable,
+    commands::{AsyncRunnable, overwrite_allowed, resolve_output_target},
     config::{RpcAuthSection, ZalletConfig},
     error::{Error, ErrorKind},
     fl,
     network::RegTestNuParam,
+    prelude::*,
 };
 
 impl AsyncRunnable for MigrateZcashConfCmd {
@@ -147,23 +148,34 @@ impl AsyncRunnable for MigrateZcashConfCmd {
         output +=
             &toml::to_string_pretty(&config_toml).map_err(|e| ErrorKind::Generic.context(e))?;
 
-        // Write the Zallet config file.
-        let output_path = match self.output.as_deref() {
-            None => todo!("Fetch default Zallet config path"),
-            Some("-") => None,
-            Some(path) => Some(path),
-        };
+        // Write the Zallet config file. `--force` may overwrite only a target named
+        // explicitly with `-o`; the inferred default path is the live config, which
+        // is never overwritten (a re-run migration would discard any manual edits).
+        let output_path = resolve_output_target(APP.config().datadir(), self.output.as_deref());
         if let Some(path) = output_path {
-            let mut f = if self.force {
-                File::create(path).await
+            let mut f = if overwrite_allowed(self.force, self.output.is_some()) {
+                File::create(&path).await
             } else {
-                File::create_new(path).await
+                match File::create_new(&path).await {
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                        return Err(ErrorKind::Generic
+                            .context(fl!(
+                                "err-config-output-exists",
+                                path = path.display().to_string()
+                            ))
+                            .into());
+                    }
+                    other => other,
+                }
             }
             .map_err(|e| ErrorKind::Generic.context(e))?;
             f.write_all(output.as_bytes())
                 .await
                 .map_err(|e| ErrorKind::Generic.context(e))?;
-            println!("{}", fl!("migrate-config-written", conf = path));
+            println!(
+                "{}",
+                fl!("migrate-config-written", conf = path.display().to_string())
+            );
         } else {
             println!("{output}")
         }

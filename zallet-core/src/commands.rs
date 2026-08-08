@@ -124,6 +124,34 @@ pub(crate) fn resolve_config_path(datadir: &Path, config_override: Option<&Path>
     }
 }
 
+/// Resolves the `-o/--output` flag of the commands that write a Zallet config file
+/// (`example-config`, `migrate-zcash-conf`).
+///
+/// Returns the file path to write to, or `None` for standard output:
+/// - When the flag is omitted, the default Zallet config file path for `datadir` is
+///   used, matching the path `zallet` loads its config from at startup.
+/// - The value `-` selects standard output.
+/// - Any other value is used as given (relative paths resolve against the current
+///   working directory, not `datadir`).
+pub(crate) fn resolve_output_target(datadir: &Path, output: Option<&str>) -> Option<PathBuf> {
+    match output {
+        None => Some(resolve_config_path(datadir, None)),
+        Some("-") => None,
+        Some(path) => Some(PathBuf::from(path)),
+    }
+}
+
+/// Whether a config-writing command may overwrite an existing file at its output
+/// target.
+///
+/// `--force` consents to overwriting only a target the user named explicitly with
+/// `-o`. When the output path is inferred (the flag was omitted), an existing file
+/// is never overwritten: the inferred path is the wallet's live configuration, and
+/// a stray `--force` must not clobber it.
+pub(crate) fn overwrite_allowed(force: bool, named_explicitly: bool) -> bool {
+    force && named_explicitly
+}
+
 impl EntryPoint {
     /// Returns the data directory to use for this Zallet command.
     fn datadir(&self) -> Result<PathBuf, FrameworkError> {
@@ -274,6 +302,42 @@ mod tests {
             resolve_config_path(datadir, None),
             Path::new("/data").join(CONFIG_FILE),
         );
+    }
+
+    #[test]
+    fn resolve_output_target_defaults_to_config_path() {
+        let datadir = Path::new("/data");
+        assert_eq!(
+            resolve_output_target(datadir, None),
+            Some(Path::new("/data").join(CONFIG_FILE)),
+        );
+    }
+
+    #[test]
+    fn resolve_output_target_dash_is_stdout() {
+        assert_eq!(resolve_output_target(Path::new("/data"), Some("-")), None);
+    }
+
+    #[test]
+    fn resolve_output_target_explicit_path_is_used_as_given() {
+        assert_eq!(
+            resolve_output_target(Path::new("/data"), Some("custom.toml")),
+            Some(PathBuf::from("custom.toml")),
+        );
+        assert_eq!(
+            resolve_output_target(Path::new("/data"), Some("/etc/zallet.toml")),
+            Some(PathBuf::from("/etc/zallet.toml")),
+        );
+    }
+
+    /// `--force` consents to overwriting only an explicitly named output; the
+    /// inferred default config path is never overwritten.
+    #[test]
+    fn overwrite_requires_both_force_and_an_explicit_output() {
+        assert!(overwrite_allowed(true, true));
+        assert!(!overwrite_allowed(true, false));
+        assert!(!overwrite_allowed(false, true));
+        assert!(!overwrite_allowed(false, false));
     }
 
     #[test]

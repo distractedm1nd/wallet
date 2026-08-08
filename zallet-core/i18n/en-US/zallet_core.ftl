@@ -213,6 +213,9 @@ warn-init-rpc-bind-insecure-remote =
     the network path. Prefer a loopback bind plus an authenticated, encrypted tunnel
     (such as SSH port forwarding or a VPN).
 err-config-file-not-found = Configuration file at {$path} does not exist.
+err-config-output-exists =
+    Refusing to overwrite the existing config file at {$path}. To replace it, name
+    the target explicitly: '-o {$path} --force'.
 err-config-file-invalid = Failed to parse configuration file at {$path}: {$error}
 err-init-incompatible-consensus =
     The backing full node follows consensus rules that this {-zallet} build cannot

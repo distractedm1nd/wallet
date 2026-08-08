@@ -127,6 +127,9 @@ pub(crate) struct ExampleConfigCmd {
     pub(crate) output: Option<String>,
 
     /// Force an existing Zallet config file to be overwritten.
+    ///
+    /// Only applies when the output is named explicitly with -o/--output; the
+    /// default config path is never overwritten.
     #[arg(short, long)]
     pub(crate) force: bool,
 
@@ -162,6 +165,9 @@ pub(crate) struct MigrateZcashConfCmd {
     pub(crate) output: Option<String>,
 
     /// Force an existing Zallet config file to be overwritten.
+    ///
+    /// Only applies when the output is named explicitly with -o/--output; the
+    /// default config path is never overwritten.
     #[arg(short, long)]
     pub(crate) force: bool,
 
