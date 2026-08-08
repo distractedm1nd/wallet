@@ -52,6 +52,10 @@ be considered breaking changes.
   (default 100).
 - `getwalletstatus` now reports a `locked` field indicating whether the wallet
   is currently usable.
+- The `rpc.allow_insecure_remote_bind` config option (default `false`),
+  explicitly opting in to serving plaintext JSON-RPC on a non-loopback
+  `rpc.bind` address.
+
 - The `zallet repair check-witnesses` command, which reports the block ranges
   that must be rescanned to rebuild missing witness data for the wallet's
   spendable notes, and can queue them for rescanning with `--queue-rescan`.
@@ -118,6 +122,13 @@ be considered breaking changes.
   neither that nor an account UUID is given. Previously an account UUID was
   required, so a freshly generated mnemonic — one with no accounts derived from
   it yet — could not be exported at all.
+- `zallet start` now refuses to open the JSON-RPC endpoint on a non-loopback
+  `rpc.bind` address unless `rpc.allow_insecure_remote_bind` is enabled, and
+  logs a prominent security warning when it is. The RPC interface is served
+  over plaintext HTTP, so a non-loopback bind exposes RPC credentials and
+  wallet passphrases to the network path; remote access should instead go
+  through an authenticated, encrypted tunnel such as SSH port forwarding or a
+  VPN. Previously any bind address was accepted without a warning.
 
 ### Fixed
 
