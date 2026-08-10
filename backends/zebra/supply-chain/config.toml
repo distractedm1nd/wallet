@@ -381,7 +381,7 @@ version = "0.8.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.crossbeam-epoch]]
-version = "0.9.18"
+version = "0.9.20"
 criteria = "safe-to-deploy"
 
 [[exemptions.crossbeam-utils]]
@@ -749,7 +749,7 @@ version = "0.16.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.i18n-embed-fl]]
-version = "0.10.0"
+version = "0.10.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.i18n-embed-impl]]
@@ -1013,7 +1013,7 @@ version = "8.0.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.num-bigint]]
-version = "0.4.7"
+version = "0.4.8"
 criteria = "safe-to-deploy"
 
 [[exemptions.num_cpus]]
@@ -1170,6 +1170,14 @@ criteria = "safe-to-deploy"
 
 [[exemptions.proc-macro-crate]]
 version = "3.5.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.proc-macro-error-attr3]]
+version = "3.1.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.proc-macro-error3]]
+version = "3.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.prost]]
@@ -1537,7 +1545,7 @@ version = "0.8.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.spin]]
-version = "0.9.8"
+version = "0.9.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.spki]]
@@ -1554,6 +1562,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.syn]]
 version = "2.0.118"
+criteria = "safe-to-deploy"
+
+[[exemptions.syn]]
+version = "3.0.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.sync_wrapper]]
