@@ -53,6 +53,12 @@ Additional CLI arguments:
 - `--allow-warnings`: If set, Zallet will ignore errors in parsing transactions
   extracted from the `wallet.dat` file. This can enable the import of key data
   from wallets that have been used on consensus forks of the Zcash chain.
+- `--allow-partial-import`: If set, Zallet will complete a migration even when
+  some accounts or transparent spending keys in the `zcashd` wallet could not
+  be imported. The skipped items are reported as warnings; they remain
+  accessible only via the original `wallet.dat` file. Without this flag, such
+  a migration fails with an error enumerating what was left behind. A
+  migration that imports nothing at all is an error regardless of this flag.
 
 > For the Zallet beta releases, the command also currently takes another required flag
 > `--this-is-beta-code-and-you-will-need-to-redo-the-migration-later`.

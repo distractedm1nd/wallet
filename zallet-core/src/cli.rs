@@ -196,6 +196,13 @@ pub(crate) struct MigrateZcashdWalletCmd {
     #[arg(long)]
     pub(crate) allow_warnings: bool,
 
+    /// Allow the migration to complete even when some accounts or transparent spending
+    /// keys in the `zcashd` wallet could not be imported. The skipped items are reported
+    /// as warnings; they remain accessible only via the original `wallet.dat` file. A
+    /// migration that imports nothing at all is an error regardless of this flag.
+    #[arg(long)]
+    pub(crate) allow_partial_import: bool,
+
     /// Skip chain scanning during migration. Keys, accounts, and transaction data are
     /// still imported, but block heights and tree state are not resolved from the chain.
     /// Useful when the corresponding chain data is not available.
