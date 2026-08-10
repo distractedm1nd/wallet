@@ -27,6 +27,20 @@ should be considered breaking changes.
   `transparent-key-import` feature), running the chain-dependent body of the
   new `zallet import-address` CLI command. Backend crates receive it through
   the blanket impl over `ChainFactory` and need no changes.
+- `components::chain::TreePool` and `components::chain::empty_tree_is_legitimate`,
+  for backends implementing `ChainView::tree_state_as_of`. Together they answer
+  whether a validator reporting *no* note commitment tree for a pool at a given
+  height legitimately means the empty tree (the pool has not activated yet) or is
+  a read failure that must be surfaced.
+
+  Backends must not substitute a placeholder frontier for one they could not
+  read. `ChainView::tree_state_as_of`'s documentation now spells out why: the
+  frontiers it returns are the wallet's only protection against note commitment
+  tree corruption, because `put_blocks`' apparent validation of them is circular
+  in Zallet's usage — the scanned block's final tree size is derived from the
+  same chain state the check compares it against. A wrong frontier is therefore
+  committed without complaint and only surfaces later as an unrecoverable
+  `shardtree` conflict.
 
 ### Changed
 

@@ -20,6 +20,20 @@ should be considered breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- The chain view no longer substitutes an empty note commitment tree when the
+  validator reports no treestate for a pool at or after that pool's activation
+  height. Previously any such read — for Sapling, Orchard, or Ironwood — was
+  treated as "this pool is not active yet, so its tree is empty", which stored a
+  placeholder frontier that nothing validates and that only surfaced later, as
+  an unrecoverable `shardtree` conflict, once a correct frontier disagreed with
+  it. Such reads are now reported as a transient chain error so sync retries.
+  Reads below a pool's activation height are unaffected.
+
+  This backend was not implicated in the reports that prompted the fix, which
+  were all on `zallet-zebra`; the same unguarded fallback existed here.
+
 ## [0.1.0-beta.2] - 2026-07-28
 
 ### Changed

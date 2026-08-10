@@ -376,12 +376,21 @@ async fn initialize<C: Chain>(
                         )
                         .await
                     };
-                    if let Err(e) = attempt.await {
-                        warn!(
+                    // Only transient failures may be swallowed here. `initialize` hands
+                    // `current_tip` to `steady_state` as its starting `prev_tip` whether or
+                    // not this scan committed anything, so ignoring a real error leaves
+                    // `steady_state` believing the wallet is at a block it never stored. The
+                    // next tip change then finds no wallet hash at that height, locates a
+                    // lower fork point, and misreads the situation as a reorg -- which is
+                    // one way the wallet's tree ends up diverging from the chain's.
+                    match attempt.await {
+                        Ok(_) => {}
+                        Err(e) if is_retryable(&e) => warn!(
                             "Best-effort tip scan during initialize failed; \
                              steady_state will populate metadata once the indexer \
                              catches up: {e}"
-                        );
+                        ),
+                        Err(e) => return Err(e),
                     }
                 }
                 break (current_tip, starting_boundary);
@@ -499,6 +508,232 @@ async fn locate_fork_point<V: ChainView>(
     .await
 }
 
+/// How far below the wallet's tip each successive note-commitment-tree recovery attempt rolls
+/// back, in blocks.
+///
+/// The rungs are: one block (a single bad checkpoint); the wallet's per-block checkpoint depth,
+/// which drops out of that window onto the retained periodic anchors; then anchor-interval
+/// multiples growing by 4x. The last rung reaches roughly two and a half weeks below the tip,
+/// which covers a divergence introduced well before it was noticed, without letting a
+/// misdiagnosis walk the wallet back to its birthday one attempt at a time.
+///
+/// These mirror `zcash_client_sqlite`'s pruning depth (100) and `zcash_client_backend`'s anchor
+/// retention interval (288). Both are crate-private upstream, so they are duplicated here; the
+/// exact values only affect how quickly recovery escalates, not its correctness.
+const TREE_RECOVERY_LADDER: &[u32] = &[1, 100, 288, 288 * 4, 288 * 16, 288 * 64];
+
+/// How many times [`recover_history`] re-attempts a scan that failed with a note commitment
+/// tree divergence before giving up, and the delay before each retry.
+///
+/// History recovery does not repair the tree itself; it waits for [`steady_state`], which owns
+/// that recovery, to rewind and re-queue the affected ranges underneath it. These bound how
+/// long it is willing to wait.
+const TREE_DIVERGENCE_RETRIES: u32 = 5;
+const TREE_DIVERGENCE_BACKOFF: &[Duration] = &[
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(5),
+    Duration::from_secs(15),
+    Duration::from_secs(30),
+];
+
+/// Whether an error means the wallet's note commitment tree disagrees with the chain's.
+///
+/// This is a different condition from [`SqliteClientError::BlockConflict`], which says the
+/// wallet is on a *different chain* at a known height and is resolved by the fork-point search.
+/// A tree conflict says the wallet's *tree* disagrees, which happens both after an undetected
+/// reorg and while the wallet is on the canonical chain — for instance when it stored a
+/// frontier that was wrong at the time and only now meets one that contradicts it. In the
+/// latter case the fork-point search finds nothing wrong and cannot help, so this class needs
+/// its own recovery.
+///
+/// All three variants are included because the same physical failure surfaces under different
+/// ones depending on which code path hit it.
+fn is_tree_divergence(error: &SyncError) -> bool {
+    match error {
+        SyncError::Tree(_) => true,
+        SyncError::Other(e) => matches!(
+            **e,
+            SqliteClientError::PutBlocksCommitmentTree { .. }
+                | SqliteClientError::CommitmentTree(_)
+                | SqliteClientError::TruncateCommitmentTree { .. }
+        ),
+        _ => false,
+    }
+}
+
+/// Bookkeeping for note-commitment-tree divergence recovery, carried across [`steady_state`]
+/// loop iterations.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct TreeRecovery {
+    /// Rollback attempts made since the divergence was first observed.
+    attempts: usize,
+    /// The wallet tip at which the divergence was first observed.
+    ///
+    /// Recovery counts as successful, and `attempts` resets, only once the wallet climbs back
+    /// *above* this. Resetting on any successful scan instead would let a one-block rollback
+    /// followed by a one-block rescan cycle forever: each rescan would look like progress,
+    /// clear the counter, and hit the same conflict again with the ladder back at its first
+    /// rung.
+    high_water: Option<BlockHeight>,
+}
+
+impl TreeRecovery {
+    /// Records a divergence observed with the wallet at `wallet_tip`, returning how far below
+    /// it to roll back, or `None` once the attempt budget is exhausted.
+    fn next_depth(&mut self, wallet_tip: BlockHeight) -> Option<u32> {
+        self.high_water.get_or_insert(wallet_tip);
+        let depth = TREE_RECOVERY_LADDER.get(self.attempts).copied()?;
+        self.attempts += 1;
+        Some(depth)
+    }
+
+    /// Records that the wallet has scanned up to `wallet_tip`, returning whether this cleared
+    /// an in-progress recovery.
+    fn note_progress(&mut self, wallet_tip: BlockHeight) -> bool {
+        match self.high_water {
+            Some(high_water) if wallet_tip > high_water => {
+                *self = Self::default();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The tip at which the current divergence was first seen, for error reporting.
+    fn observed_at(&self, wallet_tip: BlockHeight) -> BlockHeight {
+        self.high_water.unwrap_or(wallet_tip)
+    }
+}
+
+/// The height to roll back to for a tree-divergence recovery attempt of the given `depth`,
+/// floored at the wallet's `birthday`.
+///
+/// Returns `None` when the floor leaves nowhere to go: rolling back to where the wallet already
+/// is cannot make progress, and retrying from there would spin.
+fn tree_recovery_target(
+    wallet_tip: BlockHeight,
+    depth: u32,
+    birthday: BlockHeight,
+) -> Option<BlockHeight> {
+    let target = BlockHeight::from_u32(
+        u32::from(wallet_tip)
+            .saturating_sub(depth)
+            .max(u32::from(birthday)),
+    );
+    (target < wallet_tip).then_some(target)
+}
+
+/// Resolves the block to resume scanning from after a rewind, given the height the wallet was
+/// asked to rewind to and the block it actually landed on.
+///
+/// Split out from [`truncate_to_wallet_checkpoint`] so the decision is testable without a
+/// database.
+fn resume_point(
+    requested: BlockHeight,
+    actual: Option<(BlockHeight, BlockHash)>,
+) -> Result<ChainBlock, SyncError> {
+    let (height, hash) = actual.ok_or_else(|| {
+        SyncError::Chain(ChainError::backend(format!(
+            "the wallet has no block recorded at {requested} after truncating to it",
+        )))
+    })?;
+
+    if height < requested {
+        warn!(
+            "Requested a rewind to {requested}, but the wallet could only rewind to {height} \
+             (older checkpoints have been pruned); resuming from {}",
+            height + 1,
+        );
+    }
+
+    Ok(ChainBlock::new(height, hash))
+}
+
+/// Truncates the wallet to `target`, returning the block the wallet actually ended up on.
+///
+/// [`WalletWrite::truncate_to_height`] snaps the request *down* to the highest height that is
+/// a checkpoint in every active pool's note commitment tree. Checkpoints are pruned beyond a
+/// bounded depth, retaining only periodic anchors below that, so for a rollback deeper than
+/// that window the wallet can land well below `target`.
+///
+/// Callers must resume scanning from the block this returns, not from `target`. Resuming from
+/// `target + 1` after landing lower leaves a gap in the wallet's history and applies the
+/// blocks above it onto a stale frontier, which silently diverges the wallet's note commitment
+/// tree from the chain's and only surfaces later as an unrecoverable `shardtree` conflict.
+fn truncate_to_wallet_checkpoint(
+    db_data: &mut DbConnection,
+    target: BlockHeight,
+) -> Result<ChainBlock, SyncError> {
+    let actual = match db_data.truncate_to_height(target) {
+        Ok(height) => height,
+        // No shared checkpoint at or below `target`, but the wallet told us the lowest height
+        // it can reach. Rewinding further than asked is always safe: it only means rescanning
+        // more. Rewinding *less* far is what corrupts the tree.
+        Err(SqliteClientError::RequestedRewindInvalid {
+            safe_rewind_height: Some(safe),
+            requested_height,
+        }) => {
+            warn!(
+                "The wallet cannot rewind to {requested_height}; rewinding to the lowest \
+                 available checkpoint {safe} instead",
+            );
+            db_data.truncate_to_height(safe)?
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    // `truncate_to_height` deletes `blocks` rows strictly above the height it returns, so the
+    // row at that height survives and its hash is the wallet's new tip.
+    resume_point(actual, db_data.get_block_hash(actual)?.map(|h| (actual, h)))
+}
+
+/// Rolls the wallet back to recover from a note commitment tree divergence, returning the
+/// block to resume scanning from.
+///
+/// Each call rolls back further than the last (see [`TREE_RECOVERY_LADDER`]), because the
+/// conflicting data can be arbitrarily far below where the conflict was noticed: the wallet
+/// stores a bad frontier silently and only fails when a later, correct one contradicts it.
+/// Truncation removes tree data above the checkpoint it lands on, so a rollback only repairs
+/// the wallet if it reaches past the bad data.
+///
+/// Recovery is bounded, and gives up with [`SyncError::WalletTreeDiverged`] rather than
+/// rewinding indefinitely: past the ladder's reach the wallet is rescanning a lot of history
+/// on a guess, and the operator is better placed to choose.
+fn recover_from_tree_divergence(
+    db_data: &mut DbConnection,
+    prev_tip: &ChainBlock,
+    recovery: &mut TreeRecovery,
+) -> Result<ChainBlock, SyncError> {
+    let birthday = db_data
+        .get_wallet_birthday()?
+        .unwrap_or(BlockHeight::from_u32(0));
+    // Take the next rung first: it also records the high-water mark that `observed_at` reads.
+    let depth = recovery.next_depth(prev_tip.height());
+    let observed_at = recovery.observed_at(prev_tip.height());
+    let give_up = move |rolled_back_to| SyncError::WalletTreeDiverged {
+        observed_at,
+        rolled_back_to,
+        birthday,
+    };
+
+    let target = depth
+        .and_then(|depth| tree_recovery_target(prev_tip.height(), depth, birthday))
+        .ok_or_else(|| give_up(prev_tip.height()))?;
+
+    let resume_from = truncate_to_wallet_checkpoint(db_data, target)?;
+
+    // A rung that did not actually move the wallet down cannot break the conflict, and
+    // retrying from the same place would spin. This is reachable even with a target below
+    // `prev_tip`: truncation snaps to a checkpoint, and if the wallet is already sitting on
+    // the lowest one it has, it stays put.
+    if resume_from.height() >= prev_tip.height() {
+        return Err(give_up(resume_from.height()));
+    }
+
+    Ok(resume_from)
+}
+
 /// The next height to probe when walking back from `height` toward `birthday`, and whether
 /// that probe is the birthday floor (so the search must stop after it).
 fn rewind_step(height: BlockHeight, birthday: BlockHeight) -> (BlockHeight, bool) {
@@ -565,6 +800,8 @@ async fn steady_state<C: Chain>(
     // accumulated while the wallet was offline.
     tip_change_signal.notify_one();
 
+    let mut tree_recovery = TreeRecovery::default();
+
     loop {
         match steady_state_iteration(
             &chain,
@@ -579,7 +816,15 @@ async fn steady_state<C: Chain>(
         )
         .await
         {
-            Ok(ControlFlow::Continue(())) => (),
+            Ok(ControlFlow::Continue(())) => {
+                if tree_recovery.note_progress(prev_tip.height()) {
+                    info!(
+                        "Wallet recovered from the note commitment tree divergence; rescanned \
+                         past {}",
+                        prev_tip.height(),
+                    );
+                }
+            }
             // The chain reached a consensus-divergence height. Warn and end the task, which
             // triggers a graceful shutdown of the whole wallet. The iteration reports the
             // boundary height it stopped at, so we log that directly.
@@ -633,9 +878,32 @@ async fn steady_state<C: Chain>(
                     let fork_point = locate_fork_point(&chain_view, db_data, candidate_tip).await?;
                     // Enter the recovering (safe-mode) state for the rewind and rescan;
                     // `steady_state_iteration` clears it once we reach the chain tip again.
-                    status.begin_recovery(fork_point.height());
-                    db_data.truncate_to_height(fork_point.height())?;
-                    prev_tip = fork_point;
+                    // The wallet may only be able to rewind below the fork point, so resume
+                    // from wherever it actually landed.
+                    let resume_from = truncate_to_wallet_checkpoint(db_data, fork_point.height())?;
+                    status.begin_recovery(resume_from.height());
+                    prev_tip = resume_from;
+                    continue;
+                }
+                // The wallet's note commitment tree disagrees with the chain's. Unlike a block
+                // conflict this is not necessarily a reorg, so the fork-point search cannot
+                // resolve it -- on the canonical chain it would find nothing wrong and rewind
+                // nowhere. `put_blocks` is transactional, so without recovery here the failing
+                // write rolls back, the task exits, and (since any sync-task exit shuts the
+                // process down) the wallet crash-loops on the same block forever. Roll back to
+                // a progressively older checkpoint and rescan instead.
+                if is_tree_divergence(&error) {
+                    warn!(
+                        "The wallet's note commitment tree diverges from the chain's at {}; \
+                         rolling back and rescanning (attempt {} of {}): {error}",
+                        prev_tip.height(),
+                        tree_recovery.attempts + 1,
+                        TREE_RECOVERY_LADDER.len(),
+                    );
+                    let resume_from =
+                        recover_from_tree_divergence(db_data, &prev_tip, &mut tree_recovery)?;
+                    status.begin_recovery(resume_from.height());
+                    prev_tip = resume_from;
                     continue;
                 }
                 return Err(error);
@@ -687,10 +955,6 @@ async fn steady_state_iteration<C: Chain>(
         let fork_point = locate_fork_point(&chain_view, db_data, *prev_tip).await?;
         assert!(fork_point.height() <= current_tip.height());
 
-        // Fetch blocks that need to be applied to the wallet.
-        let blocks_to_apply = chain_view.stream_blocks_to_tip(fork_point.height() + 1);
-        tokio::pin!(blocks_to_apply);
-
         // If the fork point is equal to `prev_tip` then no reorg has occurred.
         if fork_point != *prev_tip {
             // Ensured by `find_fork_point`.
@@ -706,10 +970,18 @@ async fn steady_state_iteration<C: Chain>(
             );
             // Enter the recovering (safe-mode) state for the duration of the rewind and
             // rescan; it is cleared below once we reach the chain tip again.
-            status.begin_recovery(fork_point.height());
-            db_data.truncate_to_height(fork_point.height())?;
-            *prev_tip = fork_point;
+            // The wallet may only be able to rewind below the fork point, so resume from
+            // wherever it actually landed rather than assuming the fork point.
+            let resume_from = truncate_to_wallet_checkpoint(db_data, fork_point.height())?;
+            status.begin_recovery(resume_from.height());
+            *prev_tip = resume_from;
         };
+
+        // Fetch blocks that need to be applied to the wallet. This must be built *after* any
+        // rewind above: the wallet can land below the fork point, and streaming from the fork
+        // point would skip the blocks in between, applying the rest onto a stale frontier.
+        let blocks_to_apply = chain_view.stream_blocks_to_tip(prev_tip.height() + 1);
+        tokio::pin!(blocks_to_apply);
 
         // Notify the wallet of block connections.
         while let Some(block) = blocks_to_apply.try_next().await.map_err(SyncError::Chain)? {
@@ -861,18 +1133,43 @@ async fn recover_history<C: Chain>(
                 }
             })
         }) {
-            let chain_view = chain.snapshot().await.map_err(SyncError::Chain)?;
-            if steps::scan_blocks(
-                chain_view,
-                db_data,
-                params,
-                &scan_range,
-                &decryptor,
-                shutdown_height,
-            )
-            .await?
-            .is_break()
-            {
+            // A note commitment tree divergence can surface here just as easily as in
+            // `steady_state`, but this task must not repair it: it holds its own database
+            // connection, so rolling back here would race `steady_state` doing the same.
+            // `steady_state` owns that recovery and re-queues the affected ranges, so wait
+            // for it rather than failing immediately -- an exit here shuts the whole wallet
+            // down.
+            let mut attempt = 0;
+            let outcome = loop {
+                let chain_view = chain.snapshot().await.map_err(SyncError::Chain)?;
+                match steps::scan_blocks(
+                    chain_view,
+                    db_data,
+                    params,
+                    &scan_range,
+                    &decryptor,
+                    shutdown_height,
+                )
+                .await
+                {
+                    Ok(outcome) => break outcome,
+                    Err(error)
+                        if is_tree_divergence(&error) && attempt < TREE_DIVERGENCE_RETRIES =>
+                    {
+                        let backoff = TREE_DIVERGENCE_BACKOFF[attempt as usize];
+                        warn!(
+                            "History recovery hit a note commitment tree divergence scanning \
+                             {scan_range}; waiting {backoff:?} for steady-state sync to repair \
+                             it (attempt {} of {TREE_DIVERGENCE_RETRIES}): {error}",
+                            attempt + 1,
+                        );
+                        time::sleep(backoff).await;
+                        attempt += 1;
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
+            if outcome.is_break() {
                 // Reached the consensus-divergence height. History recovery operates below
                 // the boundary in practice, so this is belt-and-suspenders; stop scanning
                 // this range and let the next loop re-evaluate.
@@ -1128,8 +1425,9 @@ mod tests {
     use std::{sync::mpsc, time::Duration};
 
     use super::{
-        ChainError, PendingWalletSyncTasks, SyncError, WalletSync, is_retryable, rewind_step,
-        select_initial_scan_range, status, steady_state,
+        ChainError, PendingWalletSyncTasks, SyncError, TREE_RECOVERY_LADDER, TreeRecovery,
+        WalletSync, is_retryable, is_tree_divergence, resume_point, rewind_step,
+        select_initial_scan_range, status, steady_state, tree_recovery_target,
     };
     use crate::{
         components::{
@@ -1140,10 +1438,11 @@ mod tests {
         config::ZalletConfig,
         error::{Error, ErrorKind},
     };
+    use shardtree::error::{QueryError, ShardTreeError};
     use tokio::sync::Notify;
     use zcash_client_backend::data_api::scanning::{ScanPriority, ScanRange};
     use zcash_primitives::block::BlockHash;
-    use zcash_protocol::consensus::BlockHeight;
+    use zcash_protocol::{ShieldedPool, consensus::BlockHeight};
 
     struct TaskCancellationProbe(mpsc::Sender<()>);
 
@@ -1176,6 +1475,144 @@ mod tests {
 
     fn h(height: u32) -> BlockHeight {
         BlockHeight::from_u32(height)
+    }
+
+    fn hash(seed: u8) -> BlockHash {
+        BlockHash([seed; 32])
+    }
+
+    // `truncate_to_height` snaps the requested height down to the highest height that is a
+    // checkpoint in every pool's tree, so the wallet can land below where it was asked to
+    // rewind to. Resuming from the requested height rather than the real one leaves a gap in
+    // the wallet's history and applies later blocks onto a stale frontier -- the silent
+    // divergence that only surfaces much later as an unrecoverable shardtree conflict.
+    #[test]
+    fn resume_point_uses_the_height_the_wallet_actually_reached() {
+        let resumed = resume_point(h(3_438_008), Some((h(3_434_976), hash(7)))).unwrap();
+        assert_eq!(resumed.height(), h(3_434_976));
+        assert_eq!(resumed.hash(), hash(7));
+    }
+
+    #[test]
+    fn resume_point_is_the_request_when_the_rewind_was_exact() {
+        let resumed = resume_point(h(500), Some((h(500), hash(1)))).unwrap();
+        assert_eq!(resumed.height(), h(500));
+        assert_eq!(resumed.hash(), hash(1));
+    }
+
+    // The wallet should always have a block at the height it truncated to, since truncation
+    // deletes only rows strictly above it. If it does not, resuming would fabricate a tip.
+    #[test]
+    fn resume_point_errors_when_the_wallet_has_no_block_there() {
+        assert!(matches!(
+            resume_point(h(500), None),
+            Err(SyncError::Chain(ChainError::Backend(_))),
+        ));
+    }
+
+    #[test]
+    fn tree_recovery_rolls_back_further_each_attempt() {
+        let mut recovery = TreeRecovery::default();
+        let depths: Vec<_> = std::iter::from_fn(|| recovery.next_depth(h(1_000_000))).collect();
+        assert_eq!(depths, TREE_RECOVERY_LADDER);
+        // Budget exhausted: the caller must give up rather than keep rewinding.
+        assert_eq!(recovery.next_depth(h(1_000_000)), None);
+    }
+
+    #[test]
+    fn tree_recovery_records_the_tip_where_the_divergence_was_first_seen() {
+        let mut recovery = TreeRecovery::default();
+        recovery.next_depth(h(1_000));
+        // Later attempts happen from lower tips as the wallet rolls back, but the reported
+        // origin stays where the problem was first noticed.
+        recovery.next_depth(h(900));
+        assert_eq!(recovery.observed_at(h(900)), h(1_000));
+    }
+
+    // The invariant that keeps recovery from spinning. Resetting on any successful scan would
+    // let "roll back one block, rescan one block, conflict again" repeat forever, because each
+    // rescan looks like progress and puts the ladder back on its first rung.
+    #[test]
+    fn tree_recovery_does_not_reset_below_the_high_water_mark() {
+        let mut recovery = TreeRecovery::default();
+        recovery.next_depth(h(1_000));
+        recovery.next_depth(h(999));
+        let attempts = recovery.attempts;
+
+        assert!(!recovery.note_progress(h(999)));
+        assert!(!recovery.note_progress(h(1_000)));
+        assert_eq!(recovery.attempts, attempts);
+        assert_eq!(recovery.observed_at(h(999)), h(1_000));
+    }
+
+    #[test]
+    fn tree_recovery_resets_once_resynced_past_the_high_water_mark() {
+        let mut recovery = TreeRecovery::default();
+        recovery.next_depth(h(1_000));
+
+        assert!(recovery.note_progress(h(1_001)));
+        assert_eq!(recovery, TreeRecovery::default());
+        // A fresh divergence starts the ladder over from the new tip.
+        assert_eq!(
+            recovery.next_depth(h(1_001)),
+            TREE_RECOVERY_LADDER.first().copied()
+        );
+    }
+
+    #[test]
+    fn tree_recovery_progress_is_a_no_op_when_no_recovery_is_underway() {
+        let mut recovery = TreeRecovery::default();
+        assert!(!recovery.note_progress(h(5_000)));
+        assert_eq!(recovery, TreeRecovery::default());
+    }
+
+    #[test]
+    fn tree_recovery_target_rolls_back_by_the_depth() {
+        assert_eq!(tree_recovery_target(h(1_000), 288, h(0)), Some(h(712)));
+    }
+
+    #[test]
+    fn tree_recovery_target_is_floored_at_the_birthday() {
+        assert_eq!(
+            tree_recovery_target(h(1_000), 100_000, h(950)),
+            Some(h(950))
+        );
+    }
+
+    // Once the birthday floor coincides with where the wallet already is, rolling back cannot
+    // make progress; recovery must give up rather than retry in place.
+    #[test]
+    fn tree_recovery_target_gives_up_at_the_birthday() {
+        assert_eq!(tree_recovery_target(h(950), 100_000, h(950)), None);
+        assert_eq!(tree_recovery_target(h(940), 100_000, h(950)), None);
+    }
+
+    #[test]
+    fn tree_conflicts_are_recognised_as_divergence() {
+        use zcash_client_sqlite::error::SqliteClientError;
+
+        assert!(is_tree_divergence(&SyncError::Other(Box::new(
+            SqliteClientError::TruncateCommitmentTree {
+                pool: ShieldedPool::Ironwood,
+                height: h(3_438_008),
+                error: ShardTreeError::Query(QueryError::CheckpointPruned),
+            }
+        ))));
+    }
+
+    #[test]
+    fn other_errors_are_not_tree_divergence() {
+        use zcash_client_sqlite::error::SqliteClientError;
+
+        // A block conflict is the wallet being on a different *chain*, which the fork-point
+        // search already handles; routing it into tree recovery would rewind unnecessarily.
+        assert!(!is_tree_divergence(&SyncError::Other(Box::new(
+            SqliteClientError::BlockConflict(h(3_438_008))
+        ))));
+        assert!(!is_tree_divergence(&SyncError::BatchDecryptorUnavailable));
+        assert!(!is_tree_divergence(&SyncError::Chain(
+            ChainError::unavailable("indexer is catching up")
+        )));
     }
 
     fn range(start: u32, end: u32, priority: ScanPriority) -> ScanRange {

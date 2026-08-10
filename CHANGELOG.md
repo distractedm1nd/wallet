@@ -52,6 +52,11 @@ be considered breaking changes.
   (default 100).
 - `getwalletstatus` now reports a `locked` field indicating whether the wallet
   is currently usable.
+- The `zallet repair check-witnesses` command, which reports the block ranges
+  that must be rescanned to rebuild missing witness data for the wallet's
+  spendable notes, and can queue them for rescanning with `--queue-rescan`.
+  Note it only examines notes the wallet holds, so a clean result does not prove
+  the wallet's note commitment trees agree with the chain's.
 - `migrate-zcashd-wallet --allow-partial-import` flag, permitting a migration
   to complete even when some accounts or transparent spending keys in the
   `zcashd` wallet could not be imported. The skipped items are reported as
@@ -75,6 +80,49 @@ be considered breaking changes.
   configuration, so a migrated wallet previously lost the behaviour silently.
 
 ### Fixed
+
+- A note commitment tree conflict during sync no longer shuts the wallet down
+  permanently. Zallet now rolls the wallet back to a progressively older point
+  and rescans, up to a bounded number of attempts and never below the wallet's
+  birthday. If that does not resolve it, Zallet still exits, but now says so
+  explicitly and suggests the `zallet repair truncate-wallet` height range to
+  try — rather than repeating the same conflict on every start with no
+  indication of what to do about it.
+
+  While recovering, the wallet is in its recovering state and balance and spend
+  methods are unavailable, as during a reorganization.
+
+- After a chain reorganization, the wallet now resumes scanning from the height
+  it actually rewound to, rather than from the fork point it asked for. Rewinding
+  the wallet can only stop at a height that is a checkpoint in every shielded
+  pool's note commitment tree, and older checkpoints are pruned, so a rollback
+  deeper than a hundred or so blocks could land well below the fork point.
+  Zallet then resumed just above the fork point regardless, skipping the blocks
+  in between and applying the rest onto a stale tree state — silently diverging
+  the wallet's note commitment tree from the chain's, which surfaced later as an
+  unrecoverable conflict. Deep reorganizations will now rescan somewhat more
+  than before, and the wallet stays in its recovering state (during which
+  balance and spend methods are unavailable) for correspondingly longer.
+
+- Fixed a wallet corruption that made sync fail permanently with a note
+  commitment tree conflict, reported as
+  `PutBlocksCommitmentTree { .. Insert(Conflict(..)) }`. Once a wallet reached
+  this state it exited on every start and could only be recovered by rewinding
+  it manually with `zallet repair truncate-wallet`.
+
+  The cause was a chain backend reporting no note commitment tree for a block at
+  or after a shielded pool's activation height, which Zallet accepted as an
+  empty tree and stored. Nothing detected the bad data at the time it was
+  written, so the wallet's tree silently diverged from the chain's and only
+  failed later, when a correct tree state disagreed with what had been stored —
+  potentially thousands of blocks after the damage was done. Backends now report
+  such reads as a temporary failure and sync retries, rather than storing a
+  placeholder. This was most likely to affect `zallet-zebra` users whose wallets
+  crossed the NU6.3 activation height, where the Ironwood pool's tree is new.
+
+  Wallets already in this state still need `zallet repair truncate-wallet` to
+  recover; this release prevents the corruption from occurring, and does not
+  repair a wallet that has already diverged.
 
 - `init-wallet-encryption` now canonicalizes the age recipients derived from
   the identity file before storing them, and validates that the resulting set

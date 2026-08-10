@@ -20,6 +20,33 @@ should be considered breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- The chain view no longer substitutes an empty note commitment tree when
+  `zebrad` reports no treestate for a finalized block at or after the pool's
+  activation height. Previously any such read — for Sapling, Orchard, or
+  Ironwood — was silently treated as "this pool is not active yet, so its tree
+  is empty".
+
+  That placeholder frontier was then committed to the wallet's note commitment
+  tree. Nothing catches it: `put_blocks` appears to validate the chain state it
+  is handed, but the scanned block's final tree size is itself derived from that
+  chain state, so the check is circular and a wrong frontier of any size passes.
+  The damage only surfaced later, when a correct frontier disagreed with what
+  had been stored, as an `Insert(Conflict(..))` from `shardtree` — reported as
+  `PutBlocksCommitmentTree`. Because `put_blocks` is transactional, the failing
+  write rolled back and every subsequent start hit the same conflict, leaving
+  the wallet crash-looping until it was manually rewound with
+  `zallet repair truncate-wallet`.
+
+  `zebrad` treats a missing post-activation tree as an invariant violation
+  rather than an empty tree, but only on its by-height lookup path; this backend
+  reads by block hash, which resolves the hash to a height first and reports no
+  tree if that resolution fails, bypassing the check. Such reads are now
+  reported as a transient chain error, so sync retries instead of corrupting the
+  wallet. Reads below a pool's activation height, where an absent tree genuinely
+  means the empty tree, are unaffected.
+
 ## [0.1.0-beta.2] - 2026-07-28
 
 ### Changed

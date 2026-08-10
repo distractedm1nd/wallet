@@ -1,8 +1,10 @@
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 use std::time::SystemTime;
 
+use nonempty::NonEmpty;
 use rand::rngs::OsRng;
 use secrecy::SecretVec;
 use shardtree::{ShardTree, error::ShardTreeError};
@@ -26,7 +28,7 @@ use zcash_client_backend::{
         WalletTransparentOutput,
     },
 };
-use zcash_client_sqlite::{WalletDb, util::SystemClock};
+use zcash_client_sqlite::{WalletDb, error::SqliteClientError, util::SystemClock};
 use zcash_primitives::{block::BlockHash, transaction::Transaction};
 use zcash_protocol::{ShieldedPool, consensus::BlockHeight};
 use zip32::DiversifierIndex;
@@ -154,6 +156,26 @@ impl DbConnection {
             let _guard = self.lock.write().unwrap();
             f(self.inner.lock().unwrap().as_mut(), &self.params)
         })
+    }
+
+    /// Attempts to construct a witness for every note the wallet believes is currently
+    /// spendable, returning the block ranges that must be rescanned to repair missing witness
+    /// data.
+    ///
+    /// Note this only covers notes the wallet holds. It cannot detect a note commitment tree
+    /// that disagrees with the chain's at positions where the wallet has no note of its own,
+    /// so an empty result does not mean the tree is sound.
+    pub(crate) fn check_witnesses(&mut self) -> Result<Vec<Range<BlockHeight>>, SqliteClientError> {
+        self.with_mut(|mut db_data| db_data.check_witnesses())
+    }
+
+    /// Queues the given block ranges to be rescanned at the given priority.
+    pub(crate) fn queue_rescans(
+        &mut self,
+        rescan_ranges: NonEmpty<Range<BlockHeight>>,
+        priority: ScanPriority,
+    ) -> Result<(), SqliteClientError> {
+        self.with_mut(|mut db_data| db_data.queue_rescans(rescan_ranges, priority))
     }
 
     /// Imports the given pubkeys into the account without key derivation information, and

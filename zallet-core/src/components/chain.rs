@@ -5,6 +5,7 @@
 //! modules, selected by cargo feature.
 
 use std::collections::{BTreeSet, HashMap};
+use std::fmt;
 use std::future::Future;
 use std::ops::Range;
 
@@ -514,6 +515,64 @@ pub(crate) async fn check_consensus_compatibility(
     }
 }
 
+/// A shielded pool with a note commitment tree that [`ChainView::tree_state_as_of`] reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TreePool {
+    /// The Sapling pool, active from the Sapling network upgrade.
+    Sapling,
+    /// The Orchard pool, active from NU5.
+    Orchard,
+    /// The Ironwood pool, active from NU6.3. Shares the Orchard tree's shape.
+    Ironwood,
+}
+
+impl TreePool {
+    /// The network upgrade that activates this pool. Before it, the pool's note commitment
+    /// tree is empty and validators legitimately report no tree at all.
+    fn activated_by(self) -> consensus::NetworkUpgrade {
+        match self {
+            TreePool::Sapling => consensus::NetworkUpgrade::Sapling,
+            TreePool::Orchard => consensus::NetworkUpgrade::Nu5,
+            TreePool::Ironwood => consensus::NetworkUpgrade::Nu6_3,
+        }
+    }
+}
+
+impl fmt::Display for TreePool {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TreePool::Sapling => write!(f, "Sapling"),
+            TreePool::Orchard => write!(f, "Orchard"),
+            TreePool::Ironwood => write!(f, "Ironwood"),
+        }
+    }
+}
+
+/// Whether a validator reporting *no* note commitment tree for `pool` at `height` legitimately
+/// means "the empty tree", rather than "I could not read it".
+///
+/// A validator has no tree to report for heights before the pool activates, so there the empty
+/// tree is the correct answer. From activation onward a missing tree is an invariant violation
+/// — corruption, an interrupted format upgrade, or a block the validator cannot resolve — and
+/// substituting an empty frontier silently corrupts the wallet's shardtree (see
+/// [`ChainView::tree_state_as_of`]). `zebra-state` takes the same position internally, treating
+/// a missing post-activation tree as a panic rather than masking it.
+///
+/// Note this is deliberately a question about an *absent* tree, not an empty one: a tree that is
+/// present but empty is perfectly legitimate just after activation, and on networks where the
+/// pool has activated but no notes have been created yet.
+///
+/// Returns `true` when the pool has not activated at `height`, including on networks where the
+/// activating upgrade is not scheduled at all.
+pub fn empty_tree_is_legitimate(params: &Network, pool: TreePool, height: BlockHeight) -> bool {
+    use consensus::Parameters as _;
+
+    // Not scheduled at all, or scheduled above `height`: either way the pool is inactive here.
+    params
+        .activation_height(pool.activated_by())
+        .is_none_or(|activation| height < activation)
+}
+
 /// A consistent, reorg-immune view of the chain as of a fixed tip.
 ///
 /// A sequence of reads through one `ChainView` is mutually consistent.
@@ -531,6 +590,24 @@ pub trait ChainView: Clone + Send + Sync + 'static {
 
     /// Returns the final note commitment tree state for each shielded pool as of `height`,
     /// or `None` if `height` is above this view's tip.
+    ///
+    /// # Correctness
+    ///
+    /// The frontiers in the returned [`ChainState`] are the wallet's *only* protection
+    /// against note commitment tree corruption. `put_blocks` appears to validate them, but
+    /// in Zallet's usage that check is circular: the scanned block's final tree size is
+    /// derived from the same [`ChainState`] the check compares it against (Zallet builds
+    /// `BlockMetadata` from `from_state`, and `scanning::full::scan_block` derives
+    /// `*_final_tree_size` from that metadata). A wrong frontier of *any* size — including
+    /// an empty one — is therefore committed to the wallet's shardtree without complaint,
+    /// and only surfaces later as a `Conflict` when a correct frontier disagrees with it.
+    /// By then the wallet is unrecoverable without a manual rewind.
+    ///
+    /// Implementations must therefore never substitute a placeholder frontier for one they
+    /// could not read. Use [`empty_tree_is_legitimate`] to distinguish "this pool was not
+    /// active yet, so the empty tree is the right answer" from "I could not read this
+    /// tree", and report the latter as [`ChainError::Unavailable`] so the sync engine
+    /// retries instead of corrupting the wallet.
     fn tree_state_as_of(
         &self,
         height: BlockHeight,
@@ -1294,5 +1371,106 @@ mod tests {
             check_consensus_compatibility(&chain).await.unwrap(),
             Some(BlockHeight::from_u32(future)),
         );
+    }
+
+    mod empty_tree {
+        use super::super::{TreePool, empty_tree_is_legitimate};
+        use crate::network::Network as WalletNetwork;
+        use zcash_protocol::consensus::{BlockHeight, NetworkType};
+
+        fn mainnet() -> WalletNetwork {
+            WalletNetwork::from_type(NetworkType::Main, &[])
+        }
+
+        fn h(height: u32) -> BlockHeight {
+            BlockHeight::from_u32(height)
+        }
+
+        /// Mainnet activation heights, from `zcash_protocol`.
+        const SAPLING: u32 = 419_200;
+        const NU5: u32 = 1_687_104;
+        const NU6_3: u32 = 3_428_143;
+
+        #[test]
+        fn absent_tree_is_empty_below_activation() {
+            assert!(empty_tree_is_legitimate(
+                &mainnet(),
+                TreePool::Ironwood,
+                h(NU6_3 - 1)
+            ));
+            assert!(empty_tree_is_legitimate(
+                &mainnet(),
+                TreePool::Orchard,
+                h(NU5 - 1)
+            ));
+            assert!(empty_tree_is_legitimate(
+                &mainnet(),
+                TreePool::Sapling,
+                h(SAPLING - 1)
+            ));
+        }
+
+        #[test]
+        fn absent_tree_is_an_error_at_activation() {
+            // The activation height itself is already "active": the pool's tree exists from
+            // this block onward, so a validator reporting none is wrong.
+            assert!(!empty_tree_is_legitimate(
+                &mainnet(),
+                TreePool::Ironwood,
+                h(NU6_3)
+            ));
+            assert!(!empty_tree_is_legitimate(
+                &mainnet(),
+                TreePool::Orchard,
+                h(NU5)
+            ));
+            assert!(!empty_tree_is_legitimate(
+                &mainnet(),
+                TreePool::Sapling,
+                h(SAPLING)
+            ));
+        }
+
+        #[test]
+        fn absent_ironwood_tree_is_an_error_at_the_reported_failure_height() {
+            // The mainnet height from the beta.2 crash report: ~9.9k blocks past NU6.3, where
+            // substituting an empty Ironwood frontier corrupted the wallet's shardtree.
+            assert!(!empty_tree_is_legitimate(
+                &mainnet(),
+                TreePool::Ironwood,
+                h(3_438_008)
+            ));
+        }
+
+        #[test]
+        fn pools_are_judged_independently() {
+            // Between NU5 and NU6.3, Orchard is active but Ironwood is not, so the same
+            // height gives opposite answers per pool. A guard that ignored the pool would
+            // either corrupt Orchard state or spuriously reject Ironwood reads.
+            let between = h(NU6_3 - 1);
+            assert!(!empty_tree_is_legitimate(
+                &mainnet(),
+                TreePool::Orchard,
+                between
+            ));
+            assert!(empty_tree_is_legitimate(
+                &mainnet(),
+                TreePool::Ironwood,
+                between
+            ));
+        }
+
+        #[test]
+        fn absent_tree_is_empty_when_the_upgrade_is_not_scheduled() {
+            // Regtest with no nuparams schedules nothing, so no pool ever activates and an
+            // absent tree is always the empty tree. This is what keeps the guard from
+            // firing on networks where Ironwood is simply not in play.
+            let unscheduled = WalletNetwork::from_type(NetworkType::Regtest, &[]);
+            assert!(empty_tree_is_legitimate(
+                &unscheduled,
+                TreePool::Ironwood,
+                h(1_000_000)
+            ));
+        }
     }
 }
