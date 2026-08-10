@@ -226,6 +226,15 @@ mod tests {
         ) -> BoxFuture<'a, Result<(), Error>> {
             Box::pin(async { Ok(()) })
         }
+
+        #[cfg(all(zallet_build = "wallet", feature = "transparent-key-import"))]
+        #[allow(private_interfaces)]
+        fn run_import_address<'a>(
+            &'a self,
+            _cmd: &'a crate::cli::ImportAddressCmd,
+        ) -> BoxFuture<'a, Result<(), Error>> {
+            Box::pin(async { Ok(()) })
+        }
     }
 
     /// Registration hands back the registered backend through `chain_runtime`.

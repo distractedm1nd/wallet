@@ -93,6 +93,17 @@ pub trait ChainRuntime: Send + Sync {
         &'a self,
         cmd: &'a crate::cli::MigrateZcashdWalletCmd,
     ) -> BoxFuture<'a, Result<(), Error>>;
+
+    /// Runs the chain-dependent body of `zallet import-address`.
+    ///
+    /// The command type is crate-private for the same reason as
+    /// [`Self::run_migrate_zcashd_wallet`]'s.
+    #[cfg(all(zallet_build = "wallet", feature = "transparent-key-import"))]
+    #[allow(private_interfaces)]
+    fn run_import_address<'a>(
+        &'a self,
+        cmd: &'a crate::cli::ImportAddressCmd,
+    ) -> BoxFuture<'a, Result<(), Error>>;
 }
 
 impl<F: ChainFactory> ChainRuntime for F {
@@ -109,6 +120,15 @@ impl<F: ChainFactory> ChainRuntime for F {
     fn run_migrate_zcashd_wallet<'a>(
         &'a self,
         cmd: &'a crate::cli::MigrateZcashdWalletCmd,
+    ) -> BoxFuture<'a, Result<(), Error>> {
+        Box::pin(cmd.run_with(self))
+    }
+
+    #[cfg(all(zallet_build = "wallet", feature = "transparent-key-import"))]
+    #[allow(private_interfaces)]
+    fn run_import_address<'a>(
+        &'a self,
+        cmd: &'a crate::cli::ImportAddressCmd,
     ) -> BoxFuture<'a, Result<(), Error>> {
         Box::pin(cmd.run_with(self))
     }

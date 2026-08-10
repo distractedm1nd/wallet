@@ -27,7 +27,7 @@ mod asyncop;
 mod fund_source;
 pub(crate) mod methods;
 #[cfg(zallet_build = "wallet")]
-mod payments;
+pub(crate) mod payments;
 pub(crate) mod server;
 pub(crate) mod utils;
 
