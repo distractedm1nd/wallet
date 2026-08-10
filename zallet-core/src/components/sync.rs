@@ -878,7 +878,6 @@ async fn steady_state<C: Chain>(
                     let fork_point = locate_fork_point(&chain_view, db_data, candidate_tip).await?;
                     // Enter the recovering (safe-mode) state for the rewind and rescan;
                     // `steady_state_iteration` clears it once we reach the chain tip again.
-                    status.begin_recovery(fork_point.height());
                     // The wallet may only be able to rewind below the fork point, so resume
                     // from wherever it actually landed.
                     let resume_from = truncate_to_wallet_checkpoint(db_data, fork_point.height())?;
@@ -971,7 +970,6 @@ async fn steady_state_iteration<C: Chain>(
             );
             // Enter the recovering (safe-mode) state for the duration of the rewind and
             // rescan; it is cleared below once we reach the chain tip again.
-            status.begin_recovery(fork_point.height());
             // The wallet may only be able to rewind below the fork point, so resume from
             // wherever it actually landed rather than assuming the fork point.
             let resume_from = truncate_to_wallet_checkpoint(db_data, fork_point.height())?;
