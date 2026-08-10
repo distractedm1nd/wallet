@@ -44,6 +44,23 @@ be considered breaking changes.
   `zcashd` wallet could not be imported. The skipped items are reported as
   warnings; they remain accessible only via the original `wallet.dat` file.
 
+### Changed
+
+- `zallet start` now completes chain-backend construction and consensus checks
+  before opening or migrating the wallet database. If startup exits or is
+  cancelled, tasks started by the backend, RPC server, or wallet sync engine
+  are cancelled instead of detached.
+- The `z_sendmany`, `z_shieldcoinbase` and `z_sendfromaccount` operation results
+  now include a `broadcast` field reporting whether the transactions were
+  submitted to the network. It is `false` when `external.broadcast` is disabled:
+  the transactions are still built and recorded in the wallet (marking their
+  inputs pending-spent), but nothing else in the response distinguished that
+  from a completed send.
+- `zallet start` now warns that `external.export_dir` and `external.notify` are
+  set but not yet implemented, alongside the other not-yet-implemented options
+  it already reports. Both are accepted, documented, and migrated from `zcashd`
+  configuration, so a migrated wallet previously lost the behaviour silently.
+
 ### Fixed
 
 - `init-wallet-encryption` now canonicalizes the age recipients derived from
@@ -72,6 +89,18 @@ be considered breaking changes.
   in the original `wallet.dat` file. Previously these outcomes were logged as
   warnings and the command exited 0, so a wallet that migrated nothing looked
   like a success.
+- `zallet start` now returns a failure when a supervised runtime task returns
+  an error. Previously the first task exit was converted to a successful
+  process result, so a sync-engine or RPC crash could exit `zallet` with a zero
+  status and silently stop serving. Operators monitoring the process exit code
+  will now see the real failure.
+- The steady-state sync loop now yields to the runtime before re-iterating
+  when the chain backend reports an unchanged tip with no mempool stream.
+  Previously, a backend whose `snapshot`, `tip`, and `get_mempool_stream` all
+  return `Poll::Ready` from cached state could let an aborted `steady_state`
+  task complete a full iteration without ever polling its abort status, leaving
+  `zallet` spinning at full CPU after a sibling task failure. A backend whose
+  every view operation awaits real I/O is unaffected.
 
 ## [0.1.0-beta.2] - 2026-07-28
 
