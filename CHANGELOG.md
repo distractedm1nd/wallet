@@ -129,6 +129,14 @@ be considered breaking changes.
 - A regtest wallet's transactions mined under NU6.3 (Ironwood) no longer fail
   to import with "Consensus branch ID not known". Bumped `zewif-zcashd` to
   0.1.0-rc.5, which includes NU6.3 in the regtest activation schedule.
+- On Windows, the RPC authentication cookie is now created with an explicit
+  owner-only access policy (a protected DACL granting access solely to the
+  user Zallet runs as), instead of inheriting the ACL of the data directory
+  (GHSA-ph6w-39hf-qr6j). Previously, a data directory readable by other local
+  users left the cookie — a bearer credential for the RPC interface — readable
+  by them as well. Unix platforms already created the cookie with mode `0600`
+  and are unaffected.
+
 - A note commitment tree conflict during sync no longer shuts the wallet down
   permanently. Zallet now rolls the wallet back to a progressively older point
   and rescans, up to a bounded number of attempts and never below the wallet's

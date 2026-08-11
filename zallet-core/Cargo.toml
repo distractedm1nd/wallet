@@ -143,6 +143,17 @@ zewif-zcashd = { workspace = true, optional = true }
 # lightwalletd (temporary)
 tonic.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+# Used to create secret-bearing files (e.g. the RPC auth cookie) with an
+# explicit owner-only DACL, instead of the ACL inherited from the parent
+# directory.
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+] }
+
 [build-dependencies]
 clap = { workspace = true, features = ["string", "unstable-styles"] }
 clap_complete.workspace = true
