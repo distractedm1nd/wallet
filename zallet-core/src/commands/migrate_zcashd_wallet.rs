@@ -405,8 +405,7 @@ impl MigrateZcashdWalletCmd {
         // heights; the importer will schedule a rescan from there.
         let (birthday_chain_state, recover_until) = if let Some(chain_view) = chain_view.as_ref() {
             let mut block_heights = HashMap::new();
-            let mut mined_heights_to_backfill = Vec::new();
-            for (txid, tx) in document.transactions() {
+            for tx in document.transactions().values() {
                 if let Some(position) = tx.block_position() {
                     let block_hash = BlockHash(*position.block_hash().as_bytes());
                     if let Entry::Vacant(entry) = block_heights.entry(block_hash) {
@@ -415,22 +414,9 @@ impl MigrateZcashdWalletCmd {
                             entry.insert(height);
                         }
                     }
-                    // zcashd tracks mined height only via Orchard tree position, so
-                    // transparent txs never get one; without it, storing them below can
-                    // fail with "Consensus branch ID not known". Backfill it here.
-                    if tx.mined_height().is_none()
-                        && let Some(height) = block_heights.get(&block_hash)
-                    {
-                        mined_heights_to_backfill.push((*txid, *height));
-                    }
                 }
             }
-            for (txid, height) in mined_heights_to_backfill {
-                if let Some(mut tx) = document.get_transaction(txid).cloned() {
-                    tx.set_mined_height(zewif::BlockHeight::from_u32(u32::from(height)));
-                    document.add_transaction(txid, tx);
-                }
-            }
+            backfill_mined_heights(&mut document, &block_heights);
             info!(
                 "Wallet document references {} mined main-chain blocks",
                 block_heights.len(),
@@ -913,6 +899,42 @@ fn to_zewif_frontier<H, const DEPTH: u8>(
 /// All of the document's transactions are carried through unchanged, to be imported
 /// directly rather than recovered by the post-import chain scan (which cannot recover
 /// transactions that were never mined into a main-chain block).
+/// Backfills the mined height of every document transaction whose block hash
+/// resolved to a main-chain height.
+///
+/// zcashd records a per-transaction mined height only for transactions that
+/// added notes to the Orchard note commitment tree, so transactions touching
+/// only the transparent or Sapling pools never carry one in the exported
+/// document. The importer needs either a mined height or a nonzero expiry
+/// height to determine a transaction's consensus branch ID; a pre-NU5 coinbase
+/// transaction has neither, and would abort the import with "Consensus branch
+/// ID not known". Transactions recorded against blocks absent from
+/// `block_heights` (blocks not in the main chain) are left untouched.
+fn backfill_mined_heights(
+    document: &mut zewif::Zewif,
+    block_heights: &HashMap<BlockHash, BlockHeight>,
+) {
+    let backfill: Vec<(zewif::TxId, BlockHeight)> = document
+        .transactions()
+        .iter()
+        .filter(|(_, tx)| tx.mined_height().is_none())
+        .filter_map(|(txid, tx)| {
+            let block_hash = BlockHash(*tx.block_position()?.block_hash().as_bytes());
+            block_heights
+                .get(&block_hash)
+                .map(|height| (*txid, *height))
+        })
+        .collect();
+    for (txid, height) in backfill {
+        let mut tx = document
+            .get_transaction(txid)
+            .expect("txid was iterated from this document")
+            .clone();
+        tx.set_mined_height(zewif::BlockHeight::from_u32(u32::from(height)));
+        document.add_transaction(txid, tx);
+    }
+}
+
 fn enriched_document(
     document: &zewif::Zewif,
     secret_store: Option<zewif::SecretStore>,
@@ -985,9 +1007,10 @@ fn enriched_document(
     // recorded only against a non-main-chain block (a conflicted or reorged
     // transaction). Importing them all here is what preserves that history.
     //
-    // The importer stores each transaction as unmined (it has no mined height to
-    // record); for one that was in fact mined, the scan later re-encounters it and
-    // fills in its true height and block.
+    // Transactions whose block hash resolved to a main-chain height carry that
+    // height (see `backfill_mined_heights`) and are stored as mined; the rest are
+    // stored as unmined, and for one that was in fact mined, the scan later
+    // re-encounters it and fills in its true height and block.
     out.set_transactions(document.transactions().clone());
 
     if let Some(store) = secret_store {
@@ -1283,8 +1306,9 @@ mod tests {
     use zcash_protocol::consensus::{BlockHeight, NetworkType};
 
     use super::{
-        MigrateError, MigrateZcashdWalletCmd, ZCASHD_LEGACY_ACCOUNT_INDEX, ZCASHD_LEGACY_SOURCE,
-        check_import_report, derive_regtest_activations, describe_skipped_items, enriched_document,
+        BlockHash, HashMap, MigrateError, MigrateZcashdWalletCmd, ZCASHD_LEGACY_ACCOUNT_INDEX,
+        ZCASHD_LEGACY_SOURCE, backfill_mined_heights, check_import_report,
+        derive_regtest_activations, describe_skipped_items, enriched_document,
         has_seedless_legacy_account, mint_legacy_mnemonic, to_zewif_frontier,
     };
 
@@ -1734,5 +1758,55 @@ mod tests {
             Some(zewif::Secrets::Plain(store)) => assert_eq!(store.seeds().len(), 1),
             other => panic!("unexpected secrets: {other:?}"),
         }
+    }
+
+    #[test]
+    fn backfill_sets_mined_height_from_resolved_blocks_only() {
+        let (mut document, _legacy_fp, _mnemonic_fp) = test_document();
+
+        // A transaction with a zcashd-recorded (Orchard-derived) mined height;
+        // backfill must not override it even though its block hash resolves to a
+        // different height.
+        let orchard_txid = zewif::TxId::from_bytes([5u8; 32]);
+        let mut orchard_tx = zewif::Transaction::new(orchard_txid);
+        orchard_tx.set_block_position(zewif::TxBlockPosition::new(
+            zewif::BlockHash::from_bytes([7u8; 32]),
+            1,
+        ));
+        orchard_tx.set_mined_height(zewif::BlockHeight::from_u32(1_600_000));
+        document.add_transaction(orchard_txid, orchard_tx);
+
+        // A transaction recorded against a block that did not resolve to a
+        // main-chain height (e.g. an orphaned block).
+        let orphan_txid = zewif::TxId::from_bytes([6u8; 32]);
+        let mut orphan_tx = zewif::Transaction::new(orphan_txid);
+        orphan_tx.set_block_position(zewif::TxBlockPosition::new(
+            zewif::BlockHash::from_bytes([13u8; 32]),
+            0,
+        ));
+        document.add_transaction(orphan_txid, orphan_tx);
+
+        // A never-mined transaction (no block position).
+        let unmined_txid = zewif::TxId::from_bytes([12u8; 32]);
+        document.add_transaction(unmined_txid, zewif::Transaction::new(unmined_txid));
+
+        let block_heights =
+            HashMap::from([(BlockHash([7u8; 32]), BlockHeight::from_u32(1_700_000))]);
+        backfill_mined_heights(&mut document, &block_heights);
+
+        let txs = document.transactions();
+        // The height-less transaction mined in the resolved block gains its height.
+        assert_eq!(
+            txs[&zewif::TxId::from_bytes([4u8; 32])].mined_height(),
+            Some(zewif::BlockHeight::from_u32(1_700_000))
+        );
+        // The zcashd-recorded mined height is untouched.
+        assert_eq!(
+            txs[&orchard_txid].mined_height(),
+            Some(zewif::BlockHeight::from_u32(1_600_000))
+        );
+        // Transactions in unresolved blocks or never mined stay height-less.
+        assert_eq!(txs[&orphan_txid].mined_height(), None);
+        assert_eq!(txs[&unmined_txid].mined_height(), None);
     }
 }
