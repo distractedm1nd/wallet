@@ -60,14 +60,35 @@ If this returns `true`, the user has write access (or higher) and the contributi
 - Inability to explain the logic or design tradeoffs of the changes when asked.
 - Missing or removed `Co-Authored-By:` metadata for AI-assisted contributions (see [AI Disclosure](#ai-disclosure)).
 
-## AI Disclosure
+## Contribution Policy
 
-If AI tools were used in the preparation of a commit, the contributor MUST include `Co-Authored-By:` metadata in the commit message indicating the AI agent's participation. The contents of the `Co-Authored-By` field must clearly identify which AI system was used (if multiple systems were used, each should have a `Co-Authored-By` line). Failure to do so is grounds for closing the pull request. The contributor is the sole responsible author -- "the AI generated it" is not a justification during review.
+Before contributing please see the [CONTRIBUTING.md] file.
+
+- All PRs require human review from a maintainer. This incurs a cost upon the dev team,
+  so ensure your changes are not frivolous.
+- Keep changes focused — avoid unsolicited refactors or broad "improvement" PRs.
+- See also the license and contribution terms in `README.md`.
+
+### AI Disclosure
+
+#### Commit messages
+If AI tools were used in the preparation of a commit, the contributor MUST include
+`Co-Authored-By:` metadata in the commit message identifying the AI system. Failure to
+include this is grounds for closing the pull request. The contributor is the sole
+responsible author — "the AI generated it" is not a justification during review.
 
 Example:
 ```
 Co-Authored-By: Claude <noreply@anthropic.com>
 ```
+#### Issues and Pull Requests
+If AI tools were used in preparation of a GitHub issue, a Pull Request or comments on 
+Issues or Pull Requests, the contributor creating the Issue, Pull Request or comment
+MUST include `Co-Authored-By:` metadata in the commit message identifying the AI system. 
+The contributor is the sole responsible author — "the AI generated it" is not a justification
+during review. The contributor is responsible for ensuring that GitHub issues, Pull Requests
+and comments authored by them with assistance of AI fully adhere to [CONTRIBUTING.md] and 
+the [Code of Conduct](https://github.com/zcash/zcash/blob/master/code_of_conduct.md). 
 
 ## Project Overview
 
@@ -460,3 +481,4 @@ The Zallet authors hold this software to a high standard of quality. The followi
 - Derived serialization (e.g., `serde`) is NOT used except in specifically marked cases.
 - Serialization-critical types may not be modified once exposed in a public release.
 - These rules may be relaxed for purely ephemeral wire formats.
+
