@@ -449,15 +449,15 @@ version = "0.8.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.darling]]
-version = "0.13.4"
+version = "0.23.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.darling_core]]
-version = "0.13.4"
+version = "0.23.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.darling_macro]]
-version = "0.20.11"
+version = "0.23.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.dashmap]]
@@ -1569,11 +1569,11 @@ version = "0.7.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.serde_with]]
-version = "3.17.0"
+version = "3.21.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.serde_with_macros]]
-version = "3.17.0"
+version = "3.21.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.serdect]]
