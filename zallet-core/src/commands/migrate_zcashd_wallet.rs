@@ -883,22 +883,6 @@ fn to_zewif_frontier<H, const DEPTH: u8>(
     }
 }
 
-/// Rebuilds `document` with Zallet's enrichments applied.
-///
-/// The ZeWIF document model does not expose mutable access to the accounts of an
-/// assembled document, so enrichment reassembles it:
-///
-/// * the (possibly normalized) secret store replaces the original;
-/// * the legacy account's key source is re-pointed at the mnemonic seed, matching
-///   zcashd's post-v4.7.0 derivation semantics (for a seedless wallet, this anchors
-///   the legacy account to the freshly minted mnemonic);
-/// * account birthdays are replaced with the chain-derived birthday state where one
-///   was computed, and defaulted to the no-scan estimate where the document records
-///   nothing.
-///
-/// All of the document's transactions are carried through unchanged, to be imported
-/// directly rather than recovered by the post-import chain scan (which cannot recover
-/// transactions that were never mined into a main-chain block).
 /// Backfills the mined height of every document transaction whose block hash
 /// resolved to a main-chain height.
 ///
@@ -935,6 +919,22 @@ fn backfill_mined_heights(
     }
 }
 
+/// Rebuilds `document` with Zallet's enrichments applied.
+///
+/// The ZeWIF document model does not expose mutable access to the accounts of an
+/// assembled document, so enrichment reassembles it:
+///
+/// * the (possibly normalized) secret store replaces the original;
+/// * the legacy account's key source is re-pointed at the mnemonic seed, matching
+///   zcashd's post-v4.7.0 derivation semantics (for a seedless wallet, this anchors
+///   the legacy account to the freshly minted mnemonic);
+/// * account birthdays are replaced with the chain-derived birthday state where one
+///   was computed, and defaulted to the no-scan estimate where the document records
+///   nothing.
+///
+/// All of the document's transactions are carried through unchanged, to be imported
+/// directly rather than recovered by the post-import chain scan (which cannot recover
+/// transactions that were never mined into a main-chain block).
 fn enriched_document(
     document: &zewif::Zewif,
     secret_store: Option<zewif::SecretStore>,
