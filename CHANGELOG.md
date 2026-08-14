@@ -129,6 +129,10 @@ be considered breaking changes.
   wallet passphrases to the network path; remote access should instead go
   through an authenticated, encrypted tunnel such as SSH port forwarding or a
   VPN. Previously any bind address was accepted without a warning.
+- The `help` JSON-RPC method (and `zallet rpc help`) now omits regtest-only
+  methods (currently just `stop`) unless the node is running on the regtest
+  network, matching the "method not found" error those methods return on other
+  networks.
 
 ### Fixed
 
