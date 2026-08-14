@@ -52,8 +52,10 @@ failure blocks merging. The Zallet developers use macOS day to day, so problems 
 found and fixed promptly. However:
 
 - **No release artifacts are published.** Run Zallet on macOS by building from
-  source with the pinned toolchain (`cargo build --manifest-path
-  backends/zaino/Cargo.toml --bin zallet-zaino`, plus the `zallet` launcher).
+  source with the pinned toolchain: install the `zallet-zaino` backend binary,
+  plus the `zallet` launcher if you want config-driven dispatch, as described in
+  [Building from source with a chosen
+  backend](installation/README.md#building-from-source-with-a-chosen-backend).
 - Only the `zaino` chain backend is available (`zebra`'s read-state backend is
   Linux-only).
 - CI covers Apple silicon (`aarch64-apple-darwin`, the architecture of the
