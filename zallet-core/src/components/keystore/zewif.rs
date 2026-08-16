@@ -32,7 +32,7 @@ use zip32::fingerprint::SeedFingerprint;
 
 use crate::error::Error;
 
-use super::{Encryptor, KeyStore};
+use super::{BackupStatus, Encryptor, KeyStore};
 
 macro_rules! wfl {
     ($f:ident, $message_id:literal) => {
@@ -141,8 +141,17 @@ impl<N: NetworkConstants> SecretSink for KeyStoreSecretSink<'_, N> {
                 }
                 let mnemonic = Mnemonic::<English>::from_phrase(mnemonic.mnemonic())
                     .map_err(SecretSinkError::InvalidMnemonic)?;
-                self.block_on(self.keystore.encrypt_and_store_mnemonic(mnemonic))
-                    .map_err(SecretSinkError::Keystore)?
+                // A `zcashd` wallet recorded whether its operator had confirmed a backup
+                // of this phrase, but ZeWIF does not carry that flag, so we cannot
+                // distinguish an operator who wrote the phrase down from one who never
+                // saw it. Import it as unconfirmed: asking again costs an operator who
+                // already has it one `zallet confirm-backup` run, whereas assuming
+                // wrongly is what this whole mechanism exists to prevent.
+                self.block_on(
+                    self.keystore
+                        .encrypt_and_store_mnemonic(mnemonic, BackupStatus::Unconfirmed),
+                )
+                .map_err(SecretSinkError::Keystore)?
             }
             zewif::SeedMaterial::LegacySeed(seed) => {
                 let seed_bytes = SecretVec::new(seed.as_bytes().to_vec());

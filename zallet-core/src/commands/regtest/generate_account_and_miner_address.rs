@@ -10,6 +10,7 @@ use crate::{
     commands::AsyncRunnable,
     components::{database::Database, keystore::KeyStore},
     error::{Error, ErrorKind},
+    fl,
     network::Network,
     prelude::*,
 };
@@ -47,6 +48,18 @@ impl AsyncRunnable for GenerateAccountAndMinerAddressCmd {
                 .context("This regtest API is not supported with multiple seeds")
                 .into()),
             (Some(seed_fp), None) => {
+                // `keystore.require_backup` defaults to `false` on regtest, so this
+                // normally passes. It is still checked, so that an operator who turns the
+                // requirement on explicitly gets it applied here too rather than finding
+                // that this command quietly ignores a policy the RPC methods enforce.
+                if keystore.backup_required(&seed_fp).await? {
+                    return Err(ErrorKind::Generic
+                        .context(fl!("err-backup-not-confirmed"))
+                        .into());
+                }
+
+                keystore.unlock_on_terminal().await?;
+
                 let seed = keystore.decrypt_seed(&seed_fp).await?;
 
                 // We should use the regtest block hash here, but we also know that the

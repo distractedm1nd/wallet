@@ -33,6 +33,7 @@
 -legacy_pool_seed_fingerprint = legacy_pool_seed_fingerprint
 -zallet_toml = zallet.toml
 
+-cfg-keystore-require-backup = keystore.require_backup
 -cfg-rpc-auth = rpc.auth
 -cfg-rpc-auth-password = rpc.auth.password
 -cfg-rpc-auth-pwhash = rpc.auth.pwhash
@@ -61,6 +62,30 @@ cmd-generate-encryption-identity-passphrase-confirm = Confirm passphrase:
 cmd-generate-encryption-identity-passphrase-mismatch = Passphrases do not match
 cmd-generate-encryption-identity-passphrase-empty = Passphrase must not be empty; an empty passphrase would leave the identity effectively unencrypted.
 cmd-generate-encryption-identity-passphrase-file-failed = Failed to read passphrase from {$path}: {$error}
+
+cmd-generate-mnemonic-confirm-backup-next =
+    This phrase exists nowhere but this wallet. Run '{-zallet} confirm-backup' to record
+    it somewhere durable; until you do, {-zallet} will not derive accounts or addresses
+    from it.
+
+cmd-confirm-backup-already-confirmed = This phrase’s backup has already been confirmed.
+cmd-confirm-backup-how-to-obtain =
+    {-zallet} never displays a recovery phrase. To confirm this one’s backup you need
+    your own decrypted copy of it:
+
+        zallet export-mnemonic --armor --seedfp {$seedfp} >mnemonic.age
+        age -d -i {$identity} mnemonic.age
+
+    Write the phrase down, including the numbering of the words, on something durable
+    that you will keep somewhere secure, and delete the decrypted copy afterwards. Then
+    read the words requested below back from what you wrote down.
+cmd-confirm-backup-word-prompt = Enter word #{$position}:{" "}
+cmd-confirm-backup-confirmed = Backup confirmed.
+cmd-confirm-backup-not-complete-backup =
+    Note that this phrase is not a complete backup of your wallet. It covers only funds
+    derived from this seed; spending keys imported into the wallet separately are not
+    included, and recovering from the phrase alone will not restore them. Keep secure
+    copies of both your wallet database and your age encryption identity file as well.
 
 cmd-migrate-wallet-passphrase-prompt = Enter the passphrase for the encrypted zcashd wallet:
 cmd-migrate-wallet-passphrase-wrong = The passphrase was incorrect; please try again.
@@ -202,9 +227,29 @@ err-keystore-recipient-indirection =
 err-keystore-key-material-mismatch =
     Decrypted key material does not match the fingerprint it is stored under. The wallet
     database is corrupted or has been tampered with.
+err-keystore-no-such-mnemonic = The wallet holds no mnemonic phrase with seed fingerprint {$seedfp}.
 err-keystore-incorrect-passphrase = The wallet passphrase entered was incorrect.
 err-keystore-timeout-too-large = The requested unlock timeout is too large.
 err-wallet-locked = Wallet is locked
+
+## Seed selection errors
+
+err-seed-selection-no-mnemonics =
+    The wallet holds no mnemonic phrases. Run '{-zallet} generate-mnemonic' or
+    '{-zallet} import-mnemonic' first.
+err-seed-selection-seedfp-required =
+    The wallet holds more than one mnemonic phrase; pass --seedfp to choose which one.
+err-seed-selection-unknown-seedfp =
+    The given seed fingerprint does not match any mnemonic phrase in the wallet.
+
+## Backup confirmation errors
+
+err-backup-not-confirmed =
+    The backup of this wallet's mnemonic phrase has not been confirmed. Run
+    '{-zallet} confirm-backup' first, or set '{-cfg-keystore-require-backup}' to false.
+err-confirm-backup-wrong-word =
+    That is not the word at this position in the phrase. The backup has NOT been
+    confirmed; check your written copy and run this command again.
 
 ## Account errors
 

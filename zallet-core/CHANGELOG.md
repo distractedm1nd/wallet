@@ -56,6 +56,14 @@ should be considered breaking changes.
   (zcash/librustzcash#2941); a backend workspace must carry the same patch
   so the cohort resolves to a single source.
 
+### Removed
+
+- `config::KeyStoreSection::require_backup`, the accessor that resolved the
+  option's default. The default now depends on `consensus.network` (it is off on
+  regtest), which a section cannot see, so resolving it moved to a crate-internal
+  method on `ZalletConfig`. The `keystore.require_backup` field itself is
+  unchanged and still public.
+
 ## [0.1.0-beta.2] - 2026-07-28
 
 ### Changed

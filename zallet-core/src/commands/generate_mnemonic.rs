@@ -5,7 +5,10 @@ use rand::{RngCore, rngs::OsRng};
 use crate::{
     cli::GenerateMnemonicCmd,
     commands::AsyncRunnable,
-    components::{database::Database, keystore::KeyStore},
+    components::{
+        database::Database,
+        keystore::{BackupStatus, KeyStore},
+    },
     error::Error,
     fl,
     prelude::*,
@@ -30,12 +33,18 @@ impl AsyncRunnable for GenerateMnemonicCmd {
         let mnemonic = Mnemonic::<English>::from_entropy(entropy)
             .expect("valid entropy length won't fail to generate the mnemonic");
 
-        let seedfp = keystore.encrypt_and_store_mnemonic(mnemonic).await?;
+        // Zallet generated this phrase, so it exists nowhere else yet; the operator must
+        // record it and confirm having done so before it can back any spend authority.
+        let seedfp = keystore
+            .encrypt_and_store_mnemonic(mnemonic, BackupStatus::Unconfirmed)
+            .await?;
 
         println!(
             "{}",
             fl!("cmd-seed-fingerprint", seedfp = seedfp.to_string())
         );
+        println!();
+        println!("{}", fl!("cmd-generate-mnemonic-confirm-backup-next"));
 
         Ok(())
     }

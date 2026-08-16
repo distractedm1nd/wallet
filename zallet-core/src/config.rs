@@ -181,6 +181,20 @@ impl ZalletConfig {
         resolve_datadir_path(self.datadir(), self.keystore.encryption_identity())
     }
 
+    /// Whether to require a confirmed mnemonic backup before deriving new spend authority.
+    ///
+    /// This lives here rather than on [`KeyStoreSection`] because the default when
+    /// `keystore.require_backup` is unset depends on `consensus.network`, which that
+    /// section cannot see: it is `false` on regtest, matching `zcashd`, because a regtest
+    /// wallet is disposable and an interactive confirmation would only obstruct automated
+    /// testing.
+    #[cfg(zallet_build = "wallet")]
+    pub(crate) fn require_backup(&self) -> bool {
+        self.keystore
+            .require_backup
+            .unwrap_or(!matches!(self.consensus.network, NetworkType::Regtest))
+    }
+
     /// Returns the path to the indexer's database.
     pub fn indexer_db_path(&self) -> PathBuf {
         resolve_datadir_path(self.datadir(), self.indexer.db_path())
@@ -670,10 +684,20 @@ pub struct KeyStoreSection {
     /// replace all backslashes `\` with forward slashes `/`.
     pub encryption_identity: Option<PathBuf>,
 
-    /// By default, the wallet will not allow generation of new spending keys & addresses
-    /// from the mnemonic seed until the backup of that seed has been confirmed with the
-    /// `zcashd-wallet-tool` utility. A user may start zallet with `--walletrequirebackup=false`
-    /// to allow generation of spending keys even if the backup has not yet been confirmed.
+    /// By default, the wallet will not derive new accounts from a mnemonic seed phrase it
+    /// generated, or new addresses within accounts already derived from it, until the
+    /// operator has confirmed a backup of that phrase with the `zallet confirm-backup`
+    /// command. A user may set this to `false` to allow derivation from a phrase whose
+    /// backup has not yet been confirmed.
+    ///
+    /// A phrase the operator imported themselves needs no confirmation; they necessarily
+    /// had it to hand in order to import it.
+    ///
+    /// **The default depends on the network.** It is `true` on mainnet and testnet, and
+    /// `false` on regtest — matching `zcashd`, which set `fRequireWalletBackup = false`
+    /// in its regtest chain parameters. A regtest wallet is disposable, and confirming a
+    /// backup is interactive, so requiring it would leave automated tests with no way
+    /// through. Set this explicitly if you want the same behaviour on every network.
     pub require_backup: Option<bool>,
 }
 
@@ -688,16 +712,6 @@ impl KeyStoreSection {
         self.encryption_identity
             .as_deref()
             .unwrap_or_else(|| Path::new("encryption-identity.txt"))
-    }
-
-    /// Whether to require a confirmed wallet backup.
-    ///
-    /// By default, the wallet will not allow generation of new spending keys & addresses
-    /// from the mnemonic seed until the backup of that seed has been confirmed with the
-    /// `zcashd-wallet-tool` utility. A user may start zallet with `--walletrequirebackup=false`
-    /// to allow generation of spending keys even if the backup has not yet been confirmed.
-    pub fn require_backup(&self) -> bool {
-        self.require_backup.unwrap_or(true)
     }
 }
 
@@ -918,7 +932,7 @@ impl ZalletConfig {
             #[cfg(zallet_build = "wallet")]
             keystore("encryption_identity", conf.keystore.encryption_identity()),
             #[cfg(zallet_build = "wallet")]
-            keystore("require_backup", conf.keystore.require_backup()),
+            keystore("require_backup", conf.require_backup()),
             #[cfg(zallet_build = "wallet")]
             note_management(
                 "min_note_value",
@@ -1267,6 +1281,50 @@ impl ZalletConfig {
 #[cfg(test)]
 mod tests {
     use super::BackendName;
+
+    #[cfg(zallet_build = "wallet")]
+    use {
+        super::{ConsensusSection, KeyStoreSection, ZalletConfig},
+        zcash_protocol::consensus::NetworkType,
+    };
+
+    /// Builds a config whose only interesting content is the network and the
+    /// `keystore.require_backup` setting.
+    #[cfg(zallet_build = "wallet")]
+    fn backup_config(network: NetworkType, require_backup: Option<bool>) -> ZalletConfig {
+        ZalletConfig {
+            consensus: ConsensusSection {
+                network,
+                ..Default::default()
+            },
+            keystore: KeyStoreSection {
+                require_backup,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[cfg(zallet_build = "wallet")]
+    #[test]
+    fn require_backup_defaults_to_on_everywhere_but_regtest() {
+        // Regtest wallets are disposable and `confirm-backup` is interactive, so
+        // requiring confirmation there would leave automated tests no way through. This
+        // matches `zcashd`, which set `fRequireWalletBackup = false` in its regtest chain
+        // parameters.
+        assert!(!backup_config(NetworkType::Regtest, None).require_backup());
+
+        assert!(backup_config(NetworkType::Main, None).require_backup());
+        assert!(backup_config(NetworkType::Test, None).require_backup());
+    }
+
+    #[cfg(zallet_build = "wallet")]
+    #[test]
+    fn an_explicit_require_backup_overrides_the_network_default() {
+        // Both directions, so that regtest can opt in as well as mainnet opting out.
+        assert!(backup_config(NetworkType::Regtest, Some(true)).require_backup());
+        assert!(!backup_config(NetworkType::Main, Some(false)).require_backup());
+    }
 
     #[test]
     fn backend_key_parses() {
