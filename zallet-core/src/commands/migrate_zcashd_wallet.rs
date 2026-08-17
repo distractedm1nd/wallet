@@ -18,7 +18,9 @@ use zcash_client_sqlite::zewif::{
 };
 use zcash_primitives::block::BlockHash;
 use zcash_protocol::consensus::{BlockHeight, NetworkType, NetworkUpgrade, Parameters};
-use zewif_zcashd::{BDBDump, EncryptedKeyPolicy, ZcashdDump, ZcashdParser, ZcashdWallet};
+use zewif_zcashd::{
+    BDBDump, EncryptedKeyPolicy, ParseOptions, ZcashdDump, ZcashdParser, ZcashdWallet,
+};
 use zip32::fingerprint::SeedFingerprint;
 
 use crate::{
@@ -71,7 +73,7 @@ impl MigrateZcashdWalletCmd {
         let keystore = KeyStore::new(&config, db.clone())?;
 
         info!("Dumping zcashd wallet");
-        let wallet = self.dump_wallet()?;
+        let wallet = self.dump_wallet(config.consensus.network)?;
         info!("Wallet dumped");
 
         Self::migrate_zcashd_wallet(
@@ -97,7 +99,7 @@ impl AsyncRunnable for MigrateZcashdWalletCmd {
 }
 
 impl MigrateZcashdWalletCmd {
-    fn dump_wallet(&self) -> Result<ZcashdWallet, MigrateError> {
+    fn dump_wallet(&self, network_type: NetworkType) -> Result<ZcashdWallet, MigrateError> {
         let wallet_path = if self.path.is_relative() {
             if let Some(datadir) = self.zcashd_datadir.as_ref() {
                 datadir.join(&self.path)
@@ -154,7 +156,25 @@ impl MigrateZcashdWalletCmd {
                 }
             })?;
 
-        let parse_result = match ZcashdParser::parse_dump(&zcashd_dump, !self.allow_warnings) {
+        // A pre-Sapling wallet (zcashd < 5.0.0) has no `networkinfo` record;
+        // the parser requires a fallback network to identify its chain. For
+        // regtest, supply the wallet database's configured network. Mainnet
+        // and testnet wallets carry `networkinfo` from zcashd 2.0.0 onwards,
+        // so no fallback is needed for them, but supplying one is harmless
+        // (the wallet's own `networkinfo` record is authoritative when present).
+        let fallback_network = match network_type {
+            NetworkType::Regtest => Some(zewif::Network::Regtest(zewif::RegtestParams::default())),
+            NetworkType::Main | NetworkType::Test => None,
+        };
+
+        let base_options = ParseOptions::new().strict(!self.allow_warnings);
+        let base_options = if let Some(net) = fallback_network.clone() {
+            base_options.fallback_network(net)
+        } else {
+            base_options
+        };
+
+        let parse_result = match ZcashdParser::parse_dump_with_options(&zcashd_dump, base_options) {
             // The wallet's key material is encrypted; interactively request the wallet
             // passphrase and retry.
             Err(zewif_zcashd::Error::EncryptedWalletRequiresPassphrase) => {
@@ -164,11 +184,15 @@ impl MigrateZcashdWalletCmd {
                         rpassword::prompt_password(fl!("cmd-migrate-wallet-passphrase-prompt"))
                             .map_err(|e| ErrorKind::Generic.context(e))?;
                     attempts += 1;
-                    match ZcashdParser::parse_dump_with_policy(
-                        &zcashd_dump,
-                        !self.allow_warnings,
-                        EncryptedKeyPolicy::Decrypt(SecretVec::new(passphrase.into_bytes())),
-                    ) {
+                    let mut options = ParseOptions::new()
+                        .strict(!self.allow_warnings)
+                        .encrypted_key_policy(EncryptedKeyPolicy::Decrypt(SecretVec::new(
+                            passphrase.into_bytes(),
+                        )));
+                    if let Some(net) = fallback_network.clone() {
+                        options = options.fallback_network(net);
+                    }
+                    match ZcashdParser::parse_dump_with_options(&zcashd_dump, options) {
                         Err(zewif_zcashd::Error::WrongWalletPassphrase) if attempts < 3 => {
                             eprintln!("{}", fl!("cmd-migrate-wallet-passphrase-wrong"));
                         }

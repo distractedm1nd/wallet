@@ -121,6 +121,14 @@ be considered breaking changes.
 
 ### Fixed
 
+- `migrate-zcashd-wallet` now passes a fallback network to the wallet parser
+  for regtest wallets. A pre-Sapling wallet (zcashd < 5.0.0) has no
+  `networkinfo` record; without a fallback, parsing failed with "wallet has no
+  networkinfo record". The fallback is derived from the wallet database's
+  configured network type.
+- A regtest wallet's transactions mined under NU6.3 (Ironwood) no longer fail
+  to import with "Consensus branch ID not known". Bumped `zewif-zcashd` to
+  0.1.0-rc.5, which includes NU6.3 in the regtest activation schedule.
 - A note commitment tree conflict during sync no longer shuts the wallet down
   permanently. Zallet now rolls the wallet back to a progressively older point
   and rescans, up to a bounded number of attempts and never below the wallet's
