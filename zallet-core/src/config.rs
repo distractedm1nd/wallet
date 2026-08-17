@@ -853,6 +853,10 @@ pub struct RpcAuthSection {
     ///
     /// Each username must be unique. If duplicates are present, only one of the passwords
     /// will work.
+    ///
+    /// The username `__cookie__` is reserved for the cookie credential that Zallet
+    /// generates at startup, and cannot be configured here; Zallet will refuse to start
+    /// if it is.
     pub user: String,
 
     /// The password for this user.

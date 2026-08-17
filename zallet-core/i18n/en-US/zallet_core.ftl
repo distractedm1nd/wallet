@@ -50,6 +50,7 @@ flags-header = Options
 cmd-add-rpc-user-prompt = Enter password:
 rpc-cli-param-prompt = Enter parameter value:
 cmd-add-rpc-user-password-empty = Password must not be empty.
+cmd-add-rpc-user-reserved = The username '{$user}' is reserved for the cookie credential that {-zallet} generates at startup; choose a different username.
 cmd-add-rpc-user-instructions = Add this to your {-zallet_toml} file:
 cmd-seed-fingerprint = Seed fingerprint: {$seedfp}
 cmd-import-mnemonic-prompt = Enter mnemonic:
@@ -105,7 +106,6 @@ rpc-pwhash-auth-info = Using '{-cfg-rpc-auth-pwhash}' authorization
 
 rpc-cookie-generated = Generated RPC authentication cookie {$path}
 rpc-cookie-read-failed = Failed to read cookie file: {$error}
-rpc-cookie-user-conflict = Configured user conflicts with cookie auth username, skipping cookie generation
 
 ## zallet.toml example messages
 
@@ -199,6 +199,10 @@ err-init-identity-not-passphrase-encrypted = {$path} is not encrypted with a pas
 err-init-path-not-utf8 = {$path} is not currently supported (not UTF-8)
 err-init-identity-not-usable = Identity file at {$path} is not usable: {$error}
 err-init-rpc-auth-invalid = Invalid '{-cfg-rpc-auth}' configuration
+err-init-rpc-auth-cookie-user-reserved =
+    The '{-cfg-rpc-auth}' username '{$user}' is reserved for the cookie credential that
+    {-zallet} generates at startup. Remove that '{-cfg-rpc-auth}' entry, or choose a
+    different username for it.
 err-init-rpc-bind-not-loopback =
     Refusing to open the JSON-RPC endpoint on non-loopback address {$addr}: the RPC
     interface is served over plaintext HTTP, so RPC credentials and wallet

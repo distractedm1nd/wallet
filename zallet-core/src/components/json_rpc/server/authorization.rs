@@ -24,6 +24,7 @@ use sha2::{
 use tower::Service;
 use tracing::{info, warn};
 
+use super::cookie;
 use crate::{config::RpcAuthSection, fl};
 
 type SaltedPasswordHash = CtOutput<Hmac<Sha256>>;
@@ -161,23 +162,33 @@ impl AuthorizationLayer {
 
         let mut users: HashMap<String, PasswordHash> = auth
             .into_iter()
-            .map(|a| match (a.password, a.pwhash) {
-                // An empty password provides no authentication; treat it as an
-                // invalid config rather than an open RPC interface.
-                (Some(password), None) if !password.expose_secret().is_empty() => {
-                    using_bare_password = true;
-                    Ok((a.user, PasswordHash::from_bare(password.expose_secret())))
+            .map(|a| {
+                // The cookie username is reserved for the credential that Zallet
+                // generates at startup. Honouring a configured entry under that name
+                // would grant long-lived access via the username that clients treat as
+                // the short-lived, filesystem-protected cookie credential.
+                if a.user == cookie::COOKIE_USER {
+                    return Err(());
                 }
-                (None, Some(pwhash)) => {
-                    using_pwhash = true;
-                    let hash: PasswordHash = pwhash.parse()?;
-                    // Reject empty passwords.
-                    if hash.check("") {
-                        return Err(());
+
+                match (a.password, a.pwhash) {
+                    // An empty password provides no authentication; treat it as an
+                    // invalid config rather than an open RPC interface.
+                    (Some(password), None) if !password.expose_secret().is_empty() => {
+                        using_bare_password = true;
+                        Ok((a.user, PasswordHash::from_bare(password.expose_secret())))
                     }
-                    Ok((a.user, hash))
+                    (None, Some(pwhash)) => {
+                        using_pwhash = true;
+                        let hash: PasswordHash = pwhash.parse()?;
+                        // Reject empty passwords.
+                        if hash.check("") {
+                            return Err(());
+                        }
+                        Ok((a.user, hash))
+                    }
+                    _ => Err(()),
                 }
-                _ => Err(()),
             })
             .collect::<Result<_, _>>()?;
 
