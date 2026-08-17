@@ -250,8 +250,6 @@ mod tests {
 
     use hyper::header::HeaderValue;
 
-    use tower::Layer;
-
     use super::{Authorization, AuthorizationLayer, PasswordHash};
     use crate::components::json_rpc::server::cookie;
 
@@ -286,7 +284,7 @@ mod tests {
         use crate::config::RpcAuthSection;
 
         let auth = vec![RpcAuthSection {
-            user: "__cookie__".to_string(),
+            user: "user1".to_string(),
             password: None,
             pwhash: Some(PasswordHash::from_bare("").to_string()),
         }];
@@ -355,21 +353,50 @@ mod tests {
         assert!(!auth.is_authorized(&header));
     }
 
+    /// The cookie username is reserved for the credential Zallet generates at startup. A
+    /// config that claims it must be rejected, not silently honoured: otherwise a
+    /// configured password grants access under the name that clients trust to be the
+    /// short-lived, filesystem-permission-protected cookie.
     #[test]
-    fn configured_cookie_user_works_without_generated_cookie() {
+    fn configured_cookie_user_is_rejected() {
         use crate::config::RpcAuthSection;
         use secrecy::SecretString;
 
-        let password = "mypassword";
         let auth = vec![RpcAuthSection {
             user: cookie::COOKIE_USER.to_string(),
-            password: Some(SecretString::new(password.to_string())),
+            password: Some(SecretString::new("mypassword".to_string())),
             pwhash: None,
         }];
-        let layer = AuthorizationLayer::new(auth, None).unwrap();
-        let auth = layer.layer(());
-        let header = basic_auth_header(cookie::COOKIE_USER, password);
-        assert!(auth.is_authorized(&header));
+        assert!(AuthorizationLayer::new(auth, None).is_err());
+
+        let auth = vec![RpcAuthSection {
+            user: cookie::COOKIE_USER.to_string(),
+            password: None,
+            pwhash: Some(PasswordHash::from_bare("mypassword").to_string()),
+        }];
+        assert!(AuthorizationLayer::new(auth, None).is_err());
+    }
+
+    /// The reserved username is rejected even alongside valid entries, so a config cannot
+    /// smuggle it in behind an otherwise-fine user list.
+    #[test]
+    fn configured_cookie_user_is_rejected_alongside_valid_users() {
+        use crate::config::RpcAuthSection;
+        use secrecy::SecretString;
+
+        let auth = vec![
+            RpcAuthSection {
+                user: "user1".to_string(),
+                password: Some(SecretString::new("abadpassword".to_string())),
+                pwhash: None,
+            },
+            RpcAuthSection {
+                user: cookie::COOKIE_USER.to_string(),
+                password: Some(SecretString::new("mypassword".to_string())),
+                pwhash: None,
+            },
+        ];
+        assert!(AuthorizationLayer::new(auth, None).is_err());
     }
 
     #[cfg(feature = "rpc-cli")]
