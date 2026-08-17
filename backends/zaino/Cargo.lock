@@ -7672,9 +7672,9 @@ dependencies = [
 
 [[package]]
 name = "zewif-zcashd"
-version = "0.1.0-rc.4"
+version = "0.1.0-rc.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "424c72d333c20864e9655b4a71767069fb9e5d9228cff647b3164396e779a3cd"
+checksum = "b67252cc55aad73afc6d608f29d14711d86e2b06bffcb76585aba31ee6310901"
 dependencies = [
  "aes",
  "bech32 0.12.0",

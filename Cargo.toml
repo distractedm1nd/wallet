@@ -166,7 +166,7 @@ bip32 = "0.2"
 
 # Zcashd wallet migration
 zewif = { version = "1.0.0-rc.3" }
-zewif-zcashd = { version = "0.1.0-rc.4" }
+zewif-zcashd = { version = "0.1.0-rc.5" }
 which = "8.0"
 anyhow = "1.0"
 
