@@ -140,6 +140,14 @@ be considered breaking changes.
 - A regtest wallet's transactions mined under NU6.3 (Ironwood) no longer fail
   to import with "Consensus branch ID not known". Bumped `zewif-zcashd` to
   0.1.0-rc.5, which includes NU6.3 in the regtest activation schedule.
+- The JSON-RPC server now rejects HTTP request bodies larger than 10 MiB (the
+  request-size limit the RPC server already enforced after parsing) with
+  `413 Payload Too Large` before buffering them (GHSA-m539-482m-q66j).
+  Previously the version-compatibility middleware buffered the complete
+  request body into memory without a size limit, allowing an authenticated
+  caller to exhaust wallet memory with a single oversized request. A request
+  body that cannot be read now yields `400 Bad Request` instead of killing
+  the connection task.
 - `example-config` and `migrate-zcash-conf` no longer panic when `-o/--output`
   is omitted. As their documentation already stated, they now write to the
   default Zallet config file path (`zallet.toml` in the datadir), matching the

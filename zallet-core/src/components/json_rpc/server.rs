@@ -96,6 +96,11 @@ pub(crate) async fn spawn<C: Chain>(
 
     let server_instance = Server::builder()
         .http_only()
+        // Keep the server's parse limit equal to what the compatibility middleware
+        // will buffer, so neither can drift into accepting a body the other rejects.
+        .max_request_body_size(
+            http_request_compatibility::HttpRequestMiddleware::<()>::MAX_REQUEST_BODY_SIZE,
+        )
         .set_http_middleware(http_middleware)
         .set_rpc_middleware(rpc_middleware)
         .build(listen_addr)
