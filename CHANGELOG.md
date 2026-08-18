@@ -140,6 +140,13 @@ be considered breaking changes.
 - A regtest wallet's transactions mined under NU6.3 (Ironwood) no longer fail
   to import with "Consensus branch ID not known". Bumped `zewif-zcashd` to
   0.1.0-rc.5, which includes NU6.3 in the regtest activation schedule.
+- `example-config` and `migrate-zcash-conf` no longer panic when `-o/--output`
+  is omitted. As their documentation already stated, they now write to the
+  default Zallet config file path (`zallet.toml` in the datadir), matching the
+  path `zallet` loads its configuration from at startup. `--force` overwrites
+  an existing file only when the output is named explicitly with `-o`; the
+  inferred default path — the wallet's live configuration — is never
+  overwritten.
 - On Windows, the RPC authentication cookie is now created with an explicit
   owner-only access policy (a protected DACL granting access solely to the
   user Zallet runs as), instead of inheriting the ACL of the data directory
