@@ -54,4 +54,5 @@
 
 # Security
 
+- [Threat model](security/threat-model.md)
 - [Supply Chain Security (SLSA)](slsa/slsa.md)
