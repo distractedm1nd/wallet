@@ -1,5 +1,9 @@
 # Installation
 
+Official release artifacts are published for Linux only; see [Platform
+support](../platform-support.md) for what is promised on each platform (including
+macOS and Windows) and how that affects issue triage.
+
 There are multiple ways to install the `zallet` binary. The table below has a summary of
 the simplest options:
 
