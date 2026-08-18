@@ -34,6 +34,7 @@
 -zallet_toml = zallet.toml
 
 -cfg-keystore-require-backup = keystore.require_backup
+-cfg-rpc-allow-insecure-remote-bind = rpc.allow_insecure_remote_bind
 -cfg-rpc-auth = rpc.auth
 -cfg-rpc-auth-password = rpc.auth.password
 -cfg-rpc-auth-pwhash = rpc.auth.pwhash
@@ -198,6 +199,19 @@ err-init-identity-not-passphrase-encrypted = {$path} is not encrypted with a pas
 err-init-path-not-utf8 = {$path} is not currently supported (not UTF-8)
 err-init-identity-not-usable = Identity file at {$path} is not usable: {$error}
 err-init-rpc-auth-invalid = Invalid '{-cfg-rpc-auth}' configuration
+err-init-rpc-bind-not-loopback =
+    Refusing to open the JSON-RPC endpoint on non-loopback address {$addr}: the RPC
+    interface is served over plaintext HTTP, so RPC credentials and wallet
+    passphrases would be readable by anyone on the network path. Bind to a loopback
+    address and use an authenticated, encrypted tunnel (such as SSH port forwarding
+    or a VPN) for remote access, or set '{-cfg-rpc-allow-insecure-remote-bind} = true'
+    to accept the risk.
+warn-init-rpc-bind-insecure-remote =
+    SECURITY WARNING: serving plaintext JSON-RPC on non-loopback address {$addr}
+    because '{-cfg-rpc-allow-insecure-remote-bind}' is enabled. RPC credentials and
+    wallet passphrases sent to this endpoint can be read and replayed by anyone on
+    the network path. Prefer a loopback bind plus an authenticated, encrypted tunnel
+    (such as SSH port forwarding or a VPN).
 err-config-file-not-found = Configuration file at {$path} does not exist.
 err-config-file-invalid = Failed to parse configuration file at {$path}: {$error}
 err-init-incompatible-consensus =
