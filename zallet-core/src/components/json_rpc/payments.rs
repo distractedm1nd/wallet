@@ -384,7 +384,7 @@ pub(super) fn propose_and_check(
             kind = e.kind,
             limit = actions_limit,
             config = "-orchardactionlimit=N",
-            bound = format!("N >= %u"),
+            bound = "N >= %u".to_string(),
         ))
     })?;
 

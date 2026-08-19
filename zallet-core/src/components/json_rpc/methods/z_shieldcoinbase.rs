@@ -253,7 +253,7 @@ pub(crate) async fn call<C: Chain>(
             kind = e.kind,
             limit = actions_limit,
             config = "-orchardactionlimit=N",
-            bound = format!("N >= %u"),
+            bound = "N >= %u".to_string(),
         ))
     })?;
 
