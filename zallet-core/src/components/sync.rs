@@ -938,7 +938,7 @@ async fn steady_state_iteration<C: Chain>(
             current_tip.hash()
         );
         lower_boundary
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current_boundary| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |current_boundary| {
                 Some(
                     update_boundary(
                         BlockHeight::from_u32(current_boundary),

@@ -1,3 +1,9 @@
+// The `#[rpc(server)]` proc macro from jsonrpsee emits `#[must_use]` on the
+// generated trait server methods, which already return `#[must_use]` types
+// (`RpcResult`). Clippy's `double_must_use` lint fires on this upstream macro
+// expansion; allow it module-wide until jsonrpsee ships a fix.
+#![allow(clippy::double_must_use)]
+
 use async_trait::async_trait;
 use jsonrpsee::{
     core::{JsonValue, RpcResult},

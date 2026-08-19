@@ -142,7 +142,7 @@ pub(crate) async fn call<C: Chain>(
             count = amounts.len(),
             limit = actions_limit,
             config = "-orchardactionlimit=N",
-            bound = format!("N >= %u"),
+            bound = "N >= %u".to_string(),
         )));
     }
 
