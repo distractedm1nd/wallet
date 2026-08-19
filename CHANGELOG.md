@@ -154,8 +154,17 @@ be considered breaking changes.
   Previously the version-compatibility middleware buffered the complete
   request body into memory without a size limit, allowing an authenticated
   caller to exhaust wallet memory with a single oversized request. A request
-  body that cannot be read now yields `400 Bad Request` instead of killing
-  the connection task.
+  body that cannot be read now yields `400 Bad Request` instead of killing the
+  connection task.
+- `migrate-zcashd-wallet` now records the mined height of every migrated
+  transaction whose block is in the main chain, rather than only those `zcashd`
+  itself tracked a height for (which is just the transactions that added notes
+  to the Orchard note commitment tree). A transaction imported with neither a
+  mined height nor a non-zero expiry height gives the wallet no height from
+  which to determine its consensus branch ID, so migrating a wallet holding one
+  — a coinbase transaction, or any transaction whose sender disabled expiry —
+  previously failed outright with "Consensus branch ID not known, cannot parse
+  this transaction until it is mined".
 - `example-config` and `migrate-zcash-conf` no longer panic when `-o/--output`
   is omitted. As their documentation already stated, they now write to the
   default Zallet config file path (`zallet.toml` in the datadir), matching the
