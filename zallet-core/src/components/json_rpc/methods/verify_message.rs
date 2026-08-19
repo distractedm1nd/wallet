@@ -3,7 +3,7 @@ use documented::Documented;
 use jsonrpsee::core::RpcResult;
 use schemars::JsonSchema;
 use secp256k1::{
-    Message, Secp256k1,
+    Message, SECP256K1,
     ecdsa::{RecoverableSignature, RecoveryId},
 };
 use serde::Serialize;
@@ -22,7 +22,7 @@ pub(crate) type Response = RpcResult<ResultType>;
 /// The result of verifying a message signature.
 #[derive(Clone, Debug, Serialize, Documented, JsonSchema)]
 #[serde(transparent)]
-pub(crate) struct ResultType(bool);
+pub(crate) struct ResultType(pub(super) bool);
 
 pub(super) const PARAM_ZCASHADDRESS_DESC: &str =
     "The zcash transparent address to use for the signature.";
@@ -32,10 +32,10 @@ pub(super) const PARAM_MESSAGE_DESC: &str = "The message that was signed.";
 
 /// Creates the message hash for signature verification.
 ///
-/// This matches zcashd's `src/rpc/misc.cpp:493-495`.
+/// <https://github.com/zcash/zcash/blob/v6.11.0/src/rpc/misc.cpp#L493-L495>
 ///
 /// Each string is prefixed with CompactSize length, then the result is double SHA-256 hashed.
-fn message_hash(message: &str) -> [u8; 32] {
+pub(super) fn message_hash(message: &str) -> [u8; 32] {
     let mut writer = HashWriter::default();
 
     CompactSize::write(&mut writer, MESSAGE_MAGIC.len()).expect("write to HashWriter");
@@ -93,8 +93,6 @@ pub(crate) fn call(
     let hash = message_hash(message);
 
     // Attempt to recover the public key from the signature
-    let secp = Secp256k1::new();
-
     let recid = match RecoveryId::from_i32(recovery_id) {
         Ok(id) => id,
         Err(_) => return Ok(ResultType(false)),
@@ -110,7 +108,7 @@ pub(crate) fn call(
         Err(_) => return Ok(ResultType(false)),
     };
 
-    let recovered_pubkey = match secp.recover_ecdsa(&msg, &recoverable_sig) {
+    let recovered_pubkey = match SECP256K1.recover_ecdsa(&msg, &recoverable_sig) {
         Ok(pk) => pk,
         Err(_) => return Ok(ResultType(false)),
     };

@@ -95,11 +95,10 @@ pub(super) async fn ensure_seed_is_backed_up(
 /// be looked up via `decrypt_standalone_transparent_key` (which would error with
 /// `QueryReturnedNoRows`).
 ///
-/// Gated on `zcashd-import` because the keystore's standalone-key table (and the
-/// `decrypt_standalone_transparent_key` accessor) only exists under that feature.
-/// Also gated on the `wallet` build because its only callers (`z_send_many` and
-/// `z_shieldcoinbase`) are wallet-only, and the `DbConnection`/`KeyStore` types it
-/// uses are only imported in that build.
+/// Gated on `zcashd-import` because its only callers (`z_send_many` and
+/// `z_shieldcoinbase`) sign for standalone keys under that feature, and on the
+/// `wallet` build because those callers are wallet-only and the
+/// `DbConnection`/`KeyStore` types it uses are only imported in that build.
 #[cfg(all(zallet_build = "wallet", feature = "zcashd-import"))]
 pub(super) async fn collect_standalone_transparent_keys<NoteRef>(
     wallet: &DbConnection,

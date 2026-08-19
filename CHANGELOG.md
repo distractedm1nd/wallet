@@ -40,6 +40,12 @@ be considered breaking changes.
   and of the `z_importaddress` JSON-RPC method. Funds received by an address
   imported without key material contribute to account balances but are never
   selected for spending.
+- `signmessage` RPC method: signs a message with the private key of a
+  transparent P2PKH address, producing a signature that `verifymessage` (and
+  `zcashd`) accepts. The wallet must be unlocked. The address's key may be
+  HD-derived from the wallet seed or a standalone imported key; signing with
+  an ephemeral (ZIP 320) address is refused, as those addresses are internal
+  to transaction construction.
 - A global sync lock that blocks wallet usage while Zallet’s view of the chain
   is not trustworthy. The balance and spend RPC methods (`z_getbalances`,
   `z_getbalanceforaccount`, `z_gettotalbalance`, `z_listunspent`,

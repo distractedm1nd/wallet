@@ -143,7 +143,7 @@ zcash_primitives = "0.30.0"
 zcash_proofs = "0.30.0"
 zcash_script = "0.4.3"
 zcash_spec = "0.2"
-secp256k1 = { version = "0.29", features = ["recovery"] }
+secp256k1 = { version = "0.29", features = ["global-context", "recovery"] }
 
 # Zcash chain state
 
