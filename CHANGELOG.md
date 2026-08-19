@@ -140,6 +140,14 @@ be considered breaking changes.
 - A regtest wallet's transactions mined under NU6.3 (Ironwood) no longer fail
   to import with "Consensus branch ID not known". Bumped `zewif-zcashd` to
   0.1.0-rc.5, which includes NU6.3 in the regtest activation schedule.
+- `z_sendmany` and `pczt_create` now select inputs only from the value pools
+  named by the `fromaddress`'s receivers, as the `z_sendmany` documentation
+  already promised: a bare Sapling address or Sapling-only unified address no
+  longer draws on the account's Orchard notes, and an Orchard-only unified
+  address no longer draws on its Sapling notes. (An Orchard receiver permits
+  both the Orchard and Ironwood pools, since payments to Orchard receivers are
+  accounted to the Ironwood pool once it is active.) Previously any shielded
+  `fromaddress` permitted selection from all of the account's shielded pools.
 - The JSON-RPC server now rejects HTTP request bodies larger than 10 MiB (the
   request-size limit the RPC server already enforced after parsing) with
   `413 Payload Too Large` before buffering them (GHSA-m539-482m-q66j).
