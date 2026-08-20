@@ -35,16 +35,16 @@ futures = "0.3"
 hex = "0.4"
 i18n-embed = { version = "0.16", features = ["fluent-system", "desktop-requester"] }
 incrementalmerkletree = { version = "0.8.2", features = ["legacy-api"] }
-orchard = "0.15.0"
-sapling = { package = "sapling-crypto", version = "0.7" }
+orchard = { package = "zakura-orchard", version = "=1.0.0-rc.1" }
+sapling = { package = "zakura-sapling-crypto", version = "=1.0.0-rc.1" }
 serde = { version = "1", features = ["serde_derive"] }
 jsonrpsee = { version = "0.24", features = ["async-client"] }
 jsonrpsee-http-client = { version = "0.24", default-features = false }
 tokio = { version = "1", features = ["net", "rt-multi-thread"] }
 tower = { version = "0.4", features = ["timeout"] }
 transparent = { package = "zcash_transparent", version = "0.10.0" }
-zcash_client_backend = "=0.24.0-rc.7"
-zcash_primitives = "0.30.0"
+zcash_client_backend = { package = "zakura-client-backend", path = "../../../wallet-libraries/librustzcash/zcash_client_backend" }
+zcash_primitives = { package = "zakura-primitives", version = "=1.0.0-rc.1" }
 zcash_protocol = "0.10.0"
 zebra-chain = "11"
 zebra-rpc = "15"

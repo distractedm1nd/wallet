@@ -140,6 +140,10 @@ pub struct ZalletConfig {
     #[cfg(zallet_build = "wallet")]
     pub note_management: NoteManagementSection,
 
+    /// Settings for the experimental spendability PIR shortcut.
+    #[serde(default)]
+    pub pir: PirSection,
+
     /// Settings for the JSON-RPC interface.
     pub rpc: RpcSection,
 
@@ -203,6 +207,10 @@ impl ZalletConfig {
     /// Returns the path to the wallet database.
     pub(crate) fn wallet_db_path(&self) -> PathBuf {
         resolve_datadir_path(self.datadir(), self.database.wallet_path())
+    }
+
+    pub(crate) fn pir_identity_dir(&self) -> PathBuf {
+        self.datadir().join("pir-zakura")
     }
 }
 
@@ -922,6 +930,14 @@ impl SyncSection {
     }
 }
 
+/// Settings for the experimental spendability PIR shortcut.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Documented, DocumentedFields)]
+#[serde(deny_unknown_fields)]
+pub struct PirSection {
+    /// Zakura PIR peers in `<node-id>@<address>` form. An empty list disables the shortcut.
+    pub bootstrap_peers: Vec<String>,
+}
+
 impl ZalletConfig {
     /// Generates an example config file, with all default values included as comments.
     pub fn generate_example() -> String {
@@ -984,6 +1000,7 @@ impl ZalletConfig {
             ),
             rpc("bind", &conf.rpc.bind),
             rpc("timeout", conf.rpc.timeout().as_secs()),
+            pir("bootstrap_peers", &conf.pir.bootstrap_peers),
             sync("recover_batch_size", conf.sync.recover_batch_size()),
             sync("lock_threshold", conf.sync.lock_threshold()),
         ]
@@ -1009,6 +1026,7 @@ impl ZalletConfig {
         const NOTE_MANAGEMENT: &str = "note_management";
         const RPC: &str = "rpc";
         const RPC_AUTH: &str = "rpc.auth";
+        const PIR: &str = "pir";
         const SYNC: &str = "sync";
         fn top_level<T: Serialize>(
             f: &'static str,
@@ -1083,6 +1101,12 @@ impl ZalletConfig {
             d: T,
         ) -> ((&'static str, &'static str), Option<toml::Value>) {
             field(RPC, f, d)
+        }
+        fn pir<T: Serialize>(
+            f: &'static str,
+            d: T,
+        ) -> ((&'static str, &'static str), Option<toml::Value>) {
+            field(PIR, f, d)
         }
         fn sync<T: Serialize>(
             f: &'static str,
@@ -1305,6 +1329,7 @@ impl ZalletConfig {
                     write_section::<NoteManagementSection>(&mut config, field_name, &sec_def)
                 }
                 RPC => write_section::<RpcSection>(&mut config, field_name, &sec_def),
+                PIR => write_section::<PirSection>(&mut config, field_name, &sec_def),
                 SYNC => write_section::<SyncSection>(&mut config, field_name, &sec_def),
                 // Top-level fields correspond to CLI settings, and cannot be configured
                 // via a file.
@@ -1458,5 +1483,14 @@ zebra_state_path = "/home/user/.cache/zebra"
         // fully scanned exactly to the tip), so it must be accepted.
         let section: super::SyncSection = toml::from_str("lock_threshold = 0").unwrap();
         assert_eq!(section.lock_threshold(), 0);
+    }
+
+    #[test]
+    fn pir_section_parses_bootstrap_peers() {
+        let section: super::PirSection = toml::from_str(
+            "bootstrap_peers = [\"node@example.com:443\", \"other@127.0.0.1:9000\"]",
+        )
+        .unwrap();
+        assert_eq!(section.bootstrap_peers.len(), 2);
     }
 }

@@ -297,12 +297,19 @@ impl ChainReader for ReadStateChainReader {
             })
             .await?
         {
-            ReadResponse::SaplingSubtrees(map) => Ok(map
+            ReadResponse::SaplingSubtrees(map) => map
                 .into_values()
                 .map(|d| {
-                    CommitmentTreeRoot::from_parts(BlockHeight::from_u32(d.end_height.0), d.root)
+                    let node = Option::from(sapling::Node::from_bytes(d.root.to_bytes()))
+                        .ok_or_else(|| {
+                            ChainError::invalid_data("non-canonical Sapling subtree root")
+                        })?;
+                    Ok(CommitmentTreeRoot::from_parts(
+                        BlockHeight::from_u32(d.end_height.0),
+                        node,
+                    ))
                 })
-                .collect()),
+                .collect(),
             other => unreachable!("unexpected response to SaplingSubtrees: {other:?}"),
         }
     }

@@ -28,7 +28,9 @@ use zcash_client_backend::{
         WalletTransparentOutput,
     },
 };
-use zcash_client_sqlite::{WalletDb, error::SqliteClientError, util::SystemClock};
+use zcash_client_sqlite::{
+    PirIronwoodNote, PirIronwoodWitness, WalletDb, error::SqliteClientError, util::SystemClock,
+};
 use zcash_primitives::{block::BlockHash, transaction::Transaction};
 use zcash_protocol::{ShieldedPool, consensus::BlockHeight};
 use zip32::DiversifierIndex;
@@ -155,6 +157,25 @@ impl DbConnection {
         tokio::task::block_in_place(|| {
             let _guard = self.lock.write().unwrap();
             f(self.inner.lock().unwrap().as_mut(), &self.params)
+        })
+    }
+
+    pub(crate) fn pir_ironwood_notes(&self) -> Result<Vec<PirIronwoodNote>, SqliteClientError> {
+        self.with(|db_data| db_data.get_pir_ironwood_notes())
+    }
+
+    pub(crate) fn clear_pir_ironwood_witnesses(&mut self) -> Result<(), SqliteClientError> {
+        self.with_mut(|mut db_data| db_data.clear_pir_ironwood_witnesses())
+    }
+
+    pub(crate) fn replace_pir_ironwood_witnesses(
+        &mut self,
+        anchor_height: BlockHeight,
+        anchor_root: [u8; 32],
+        witnesses: &[PirIronwoodWitness],
+    ) -> Result<(), SqliteClientError> {
+        self.with_mut(|mut db_data| {
+            db_data.replace_pir_ironwood_witnesses(anchor_height, anchor_root, witnesses)
         })
     }
 
@@ -386,6 +407,19 @@ impl WalletRead for DbConnection {
         query: zcash_client_backend::data_api::NullifierQuery,
     ) -> Result<Vec<(Self::AccountId, orchard::note::Nullifier)>, Self::Error> {
         self.with(|db_data| db_data.get_ironwood_nullifiers(query))
+    }
+
+    fn get_pir_ironwood_witness(
+        &self,
+        txid: &zcash_protocol::TxId,
+        output_index: u32,
+        anchor_height: BlockHeight,
+    ) -> Result<Option<(orchard::tree::Anchor, orchard::tree::MerklePath)>, Self::Error> {
+        self.with(|db_data| db_data.get_pir_ironwood_witness(txid, output_index, anchor_height))
+    }
+
+    fn pir_ironwood_anchor_height(&self) -> Result<Option<BlockHeight>, Self::Error> {
+        self.with(|db_data| db_data.pir_ironwood_anchor_height())
     }
 
     fn get_transparent_receivers(

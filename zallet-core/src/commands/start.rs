@@ -1,23 +1,128 @@
 //! `start` subcommand
 
 use abscissa_core::{FrameworkError, Runnable, config};
+use anyhow::{Context, bail};
+use spendability_pir_client::{P2pPirNode, SpendClient, WitnessClient, ZcashNetwork};
 use tokio::{pin, select, task::AbortHandle};
+use zcash_client_backend::data_api::WalletRead;
+use zcash_client_sqlite::PirIronwoodWitness;
+use zcash_protocol::consensus::{BlockHeight, NetworkType};
 
 use crate::{
     cli::StartCmd,
     commands::AsyncRunnable,
     components::{
         TaskHandle,
-        chain::{ChainFactory, check_consensus_compatibility},
+        chain::{Chain, ChainFactory, ChainView, check_consensus_compatibility},
         database::Database,
         json_rpc::JsonRpc,
         sync::{WalletSync, status},
     },
     config::ZalletConfig,
-    error::Error,
+    error::{Error, ErrorKind},
     fl,
     prelude::*,
 };
+
+const PIR_STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+async fn try_pir_shortcut<C: Chain>(
+    config: &ZalletConfig,
+    db: &Database,
+    chain: &C,
+) -> anyhow::Result<()> {
+    if config.pir.bootstrap_peers.is_empty() {
+        return Ok(());
+    }
+
+    let network = match config.consensus.network {
+        NetworkType::Main => ZcashNetwork::Main,
+        NetworkType::Test => ZcashNetwork::Test,
+        NetworkType::Regtest => bail!("PIR does not support regtest"),
+    };
+    tokio::fs::create_dir_all(config.pir_identity_dir()).await?;
+    let (node, client) = P2pPirNode::spawn(
+        config.pir_identity_dir(),
+        config.pir.bootstrap_peers.clone(),
+        network,
+    )
+    .await?;
+
+    let result = tokio::time::timeout(PIR_STARTUP_TIMEOUT, async {
+        let session = client.session().await?;
+        let health = session.health().await?;
+        if health.nullifier.phase != "serving" || health.witness.phase != "serving" {
+            bail!("PIR provider is not serving");
+        }
+
+        let db_handle = db.handle().await?;
+        let notes = db_handle.pir_ironwood_notes()?;
+        if notes.is_empty() {
+            return Ok(());
+        }
+        let last_scanned = db_handle
+            .block_fully_scanned()?
+            .context("wallet has not scanned any blocks")?
+            .block_height();
+        drop(db_handle);
+
+        let spend = SpendClient::connect_p2p(session.clone(), network).await?;
+        if spend.earliest_height() > u64::from(u32::from(last_scanned)) + 1 {
+            bail!("PIR nullifier retention does not cover the unscanned range");
+        }
+        for note in &notes {
+            if spend.is_spent(note.nullifier()).await? {
+                bail!("PIR reports a wallet note as spent");
+            }
+        }
+
+        let witness_client = WitnessClient::connect_p2p(session, network).await?;
+        if spend.latest_height() < witness_client.anchor_height() {
+            bail!("PIR datasets do not share a usable snapshot");
+        }
+        let anchor_height = BlockHeight::from_u32(
+            witness_client
+                .anchor_height()
+                .try_into()
+                .context("PIR anchor height exceeds the Zcash height range")?,
+        );
+        let chain_state = chain
+            .snapshot()
+            .await?
+            .tree_state_as_of(anchor_height)
+            .await?
+            .context("PIR anchor is above the chain tip")?;
+        let chain_root = chain_state.final_ironwood_tree().root().to_bytes();
+
+        let mut witnesses = Vec::with_capacity(notes.len());
+        for note in &notes {
+            if note.mined_height() > anchor_height {
+                bail!("PIR anchor predates a wallet note");
+            }
+            let witness = witness_client
+                .get_witness(u64::from(note.position()))
+                .await?;
+            if witness.anchor_root != chain_root {
+                bail!("PIR witness root does not match the chain");
+            }
+            witnesses.push(PirIronwoodWitness::new(
+                note.note_id(),
+                note.position(),
+                witness.siblings,
+            ));
+        }
+
+        db.handle()
+            .await?
+            .replace_pir_ironwood_witnesses(anchor_height, chain_root, &witnesses)?;
+        Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .unwrap_or_else(|_| Err(anyhow::anyhow!("PIR startup timed out")));
+
+    node.shutdown().await;
+    result
+}
 
 #[cfg(zallet_build = "wallet")]
 use crate::components::keystore::KeyStore;
@@ -167,6 +272,15 @@ impl StartCmd {
         let shutdown_height = check_consensus_compatibility(&chain).await?;
 
         let db = Database::open(config).await?;
+        {
+            let mut db_handle = db.handle().await?;
+            db_handle.clear_pir_ironwood_witnesses().map_err(|error| {
+                ErrorKind::Init.context(format!("failed to disable stale PIR state: {error}"))
+            })?;
+        }
+        if let Err(error) = try_pir_shortcut(config, &db, &chain).await {
+            warn!(%error, "PIR shortcut unavailable; continuing with ordinary sync");
+        }
         #[cfg(zallet_build = "wallet")]
         let keystore = KeyStore::new(config, db.clone())?;
 
