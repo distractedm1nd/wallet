@@ -46,6 +46,9 @@ Returns wallet status information.
 
 List all commands, or get help for a specified command.
 
+Commands that are not available on the network this node is running on (such as
+regtest-only commands) are omitted.
+
 #### Arguments
 - `command` (string, optional) The command to get help on.
 

@@ -9,6 +9,8 @@ use jsonrpsee::{
     core::{JsonValue, RpcResult},
     proc_macros::rpc,
 };
+#[cfg(zallet_build = "wallet")]
+use zcash_protocol::consensus::Parameters;
 
 use crate::components::{
     chain::Chain,
@@ -23,6 +25,15 @@ use {
         json_rpc::payments::AmountParameter, keystore::KeyStore, sync::WalletDecryptorHandle,
     },
 };
+
+/// The JSON-RPC methods that are only available when Zallet is running on the regtest
+/// network.
+///
+/// These methods return a "method not found" error on other networks, and `help` hides
+/// them there. Every method gated on `NetworkType::Regtest` in its `call` implementation
+/// must be listed here.
+#[cfg(zallet_build = "wallet")]
+const REGTEST_ONLY_METHODS: &[&str] = &["stop"];
 
 mod convert_tex;
 mod decode_raw_transaction;
@@ -357,11 +368,14 @@ pub(crate) trait Rpc {
 pub(crate) trait WalletRpc {
     /// List all commands, or get help for a specified command.
     ///
+    /// Commands that are not available on the network this node is running on (such as
+    /// regtest-only commands) are omitted.
+    ///
     /// # Arguments
     /// - `command` (string, optional) The command to get help on.
     // TODO: Improve the build script so this works with non-wallet Zallet builds.
     #[method(name = "help")]
-    fn help(&self, command: Option<&str>) -> help::Response;
+    async fn help(&self, command: Option<&str>) -> help::Response;
 
     /// Returns an OpenRPC schema as a description of this service.
     // TODO: Improve the build script so this works with non-wallet Zallet builds.
@@ -1202,8 +1216,8 @@ impl<C: Chain> RpcServer for RpcImpl<C> {
 #[cfg(zallet_build = "wallet")]
 #[async_trait]
 impl<C: Chain> WalletRpcServer for WalletRpcImpl<C> {
-    fn help(&self, command: Option<&str>) -> help::Response {
-        help::call(command)
+    async fn help(&self, command: Option<&str>) -> help::Response {
+        help::call(self.wallet().await?.params().network_type(), command)
     }
 
     fn openrpc(&self) -> openrpc::Response {
