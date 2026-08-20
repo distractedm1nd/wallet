@@ -138,6 +138,19 @@ be considered breaking changes.
 
 ### Fixed
 
+- The `__cookie__` JSON-RPC username is now actually reserved. It is documented
+  as belonging to the cookie credential that Zallet generates at startup, but a
+  `[[rpc.auth]]` entry could claim it: Zallet warned, skipped cookie generation,
+  and served that name with the configured password, so a configured credential
+  gained access under the username clients treat as the short-lived,
+  filesystem-permission-protected cookie. Zallet now refuses to start if a
+  `[[rpc.auth]]` user is named `__cookie__`, and always generates its cookie.
+  `zallet add-rpc-user __cookie__` is rejected for the same reason, instead of
+  printing a config block that would not start.
+
+  Anyone who relied on configuring `__cookie__` as an ordinary RPC user must
+  rename that `[[rpc.auth]]` entry before upgrading, and update the clients
+  using it.
 - `migrate-zcashd-wallet` now passes a fallback network to the wallet parser
   for regtest wallets. A pre-Sapling wallet (zcashd < 5.0.0) has no
   `networkinfo` record; without a fallback, parsing failed with "wallet has no
