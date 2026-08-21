@@ -113,7 +113,11 @@ pub(crate) enum ZalletCmd {
 /// `start` subcommand
 #[derive(Debug, Parser)]
 #[cfg_attr(outside_buildscript, derive(Command))]
-pub(crate) struct StartCmd {}
+pub(crate) struct StartCmd {
+    /// Start only the experimental PIR balance RPC, without a chain backend or wallet sync.
+    #[arg(long)]
+    pub(crate) pir_only: bool,
+}
 
 /// `example-config` subcommand
 #[derive(Debug, Parser)]

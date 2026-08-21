@@ -455,6 +455,13 @@ The operation will remain in memory.
 - `operationid` (array, optional) A list of operation ids we are interested in.
   If not provided, examine all operations known to the node.
 
+## `z_getspendablebalance`
+
+*Only available in wallet builds of Zallet.*
+
+Returns the total value, in ZEC, of known Ironwood notes for which the configured
+PIR provider reports no spent nullifier.
+
 ## `z_gettotalbalance`
 
 *Only available in wallet builds of Zallet.*

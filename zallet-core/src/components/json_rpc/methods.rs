@@ -101,6 +101,8 @@ mod z_export_viewing_key;
 #[cfg(zallet_build = "wallet")]
 mod z_get_balance_for_account;
 #[cfg(zallet_build = "wallet")]
+pub(crate) mod z_get_spendable_balance;
+#[cfg(zallet_build = "wallet")]
 mod z_get_total_balance;
 #[cfg(zallet_build = "wallet")]
 pub(crate) mod z_import_address;
@@ -505,6 +507,11 @@ pub(crate) trait WalletRpc {
     ///   transactions confirmed at least this many times.
     #[method(name = "z_getbalances")]
     async fn get_balances(&self, minconf: Option<u32>) -> get_balances::Response;
+
+    /// Returns the total value, in ZEC, of known Ironwood notes for which the configured
+    /// PIR provider reports no spent nullifier.
+    #[method(name = "z_getspendablebalance")]
+    async fn z_get_spendable_balance(&self) -> z_get_spendable_balance::Response;
 
     /// Returns the account's spendable balance for each value pool ("transparent",
     /// "sapling", and "orchard").
@@ -1043,6 +1050,7 @@ pub(crate) struct WalletRpcImpl<C: Chain> {
     keystore: KeyStore,
     decryptor: WalletDecryptorHandle,
     async_ops: OperationQueue,
+    config: crate::config::ZalletConfig,
 }
 
 #[cfg(zallet_build = "wallet")]
@@ -1055,12 +1063,14 @@ impl<C: Chain> WalletRpcImpl<C> {
         decryptor: WalletDecryptorHandle,
         sync_status: SyncStatusReader,
         async_operation_limit: usize,
+        config: crate::config::ZalletConfig,
     ) -> Self {
         Self {
             general: RpcImpl::new(wallet, keystore.clone(), chain_view, sync_status),
             keystore,
             decryptor,
             async_ops: OperationQueue::new(async_operation_limit),
+            config,
         }
     }
 
@@ -1285,6 +1295,10 @@ impl<C: Chain> WalletRpcServer for WalletRpcImpl<C> {
     async fn get_balances(&self, minconf: Option<u32>) -> get_balances::Response {
         self.general.ensure_synced()?;
         get_balances::call(self.wallet().await?.as_ref(), minconf)
+    }
+
+    async fn z_get_spendable_balance(&self) -> z_get_spendable_balance::Response {
+        z_get_spendable_balance::call(&self.general.wallet, &self.config).await
     }
 
     async fn z_get_balance_for_account(
