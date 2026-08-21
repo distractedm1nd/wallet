@@ -545,11 +545,11 @@ pub(crate) trait WalletRpc {
         rescan: Option<bool>,
     ) -> z_import_address::Response;
 
-    /// Imports a Sapling viewing key into the wallet.
+    /// Imports a full viewing key into the wallet.
     ///
-    /// Only Sapling extended full viewing keys are supported. The wallet will track
-    /// incoming and outgoing transactions for addresses derived from this key, but
-    /// will not have spending authority.
+    /// Sapling extended full viewing keys and unified full viewing keys are supported.
+    /// The wallet will track incoming and outgoing transactions for addresses derived
+    /// from this key, but will not have spending authority.
     ///
     /// # Arguments
     ///

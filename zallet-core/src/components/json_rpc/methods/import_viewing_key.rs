@@ -5,9 +5,9 @@ use serde::Serialize;
 use zcash_client_backend::data_api::{Account, AccountPurpose, WalletRead, WalletWrite};
 use zcash_keys::{
     encoding::{decode_extended_full_viewing_key, encode_payment_address},
-    keys::UnifiedFullViewingKey,
+    keys::{UnifiedAddressRequest, UnifiedFullViewingKey},
 };
-use zcash_protocol::consensus::{BlockHeight, NetworkConstants};
+use zcash_protocol::consensus::{BlockHeight, NetworkConstants, Parameters};
 
 use crate::components::{
     chain::Chain,
@@ -21,16 +21,15 @@ pub(crate) type Response = RpcResult<ResultType>;
 /// Result of importing a viewing key.
 #[derive(Clone, Debug, Serialize, Documented, JsonSchema)]
 pub(crate) struct ResultType {
-    /// The type of the imported address (always "sapling").
+    /// The type of the imported address ("sapling" or "unified").
     address_type: String,
 
-    /// The Sapling payment address corresponding to the imported viewing key
-    /// (the default address).
+    /// The default address corresponding to the imported viewing key.
     address: String,
 }
 
 pub(super) const PARAM_VKEY_DESC: &str =
-    "The viewing key (only Sapling extended full viewing keys are supported).";
+    "The Sapling extended full viewing key or unified full viewing key.";
 pub(super) const PARAM_RESCAN_DESC: &str = "Whether to rescan the blockchain for transactions (\"yes\", \"no\", or \"whenkeyisnew\"; default is \"whenkeyisnew\"). When rescan is enabled, the wallet's background sync engine will scan for historical transactions from the given start height.";
 pub(super) const PARAM_START_HEIGHT_DESC: &str = "Block height from which to begin the rescan (default is 0). Only used when rescan is \"yes\" or \"whenkeyisnew\" (for a new key).";
 
@@ -77,6 +76,19 @@ fn decode_vkey_and_address(
     Ok((extfvk, address))
 }
 
+fn decode_unified_vkey_and_address<P: Parameters>(
+    params: &P,
+    vkey: &str,
+) -> RpcResult<(UnifiedFullViewingKey, String)> {
+    let ufvk = UnifiedFullViewingKey::decode(params, vkey).map_err(|e| {
+        LegacyCode::InvalidAddressOrKey.with_message(format!("Invalid viewing key: {e}"))
+    })?;
+    let (address, _) = ufvk
+        .default_address(UnifiedAddressRequest::ALLOW_ALL)
+        .map_err(|e| LegacyCode::InvalidAddressOrKey.with_message(e.to_string()))?;
+    Ok((ufvk, address.encode(params)))
+}
+
 pub(crate) async fn call<C: Chain>(
     wallet: &mut DbConnection,
     chain: C,
@@ -106,14 +118,19 @@ pub(crate) async fn call<C: Chain>(
         return Err(LegacyCode::InvalidParameter.with_static("Block height out of range."));
     }
 
-    let hrp_fvk = wallet.params().hrp_sapling_extended_full_viewing_key();
-    let hrp_addr = wallet.params().hrp_sapling_payment_address();
-    let (extfvk, address) = decode_vkey_and_address(hrp_fvk, hrp_addr, vkey)?;
-
-    // Construct a UFVK from the Sapling extended full viewing key so the wallet can
-    // track transactions to/from this key's addresses.
-    let ufvk = UnifiedFullViewingKey::from_sapling_extended_full_viewing_key(extfvk)
-        .map_err(|e| LegacyCode::Wallet.with_message(e.to_string()))?;
+    let (ufvk, address_type, address) = if vkey.starts_with("uview") {
+        let (ufvk, address) = decode_unified_vkey_and_address(wallet.params(), vkey)?;
+        (ufvk, "unified", address)
+    } else {
+        let (extfvk, address) = decode_vkey_and_address(
+            wallet.params().hrp_sapling_extended_full_viewing_key(),
+            wallet.params().hrp_sapling_payment_address(),
+            vkey,
+        )?;
+        let ufvk = UnifiedFullViewingKey::from_sapling_extended_full_viewing_key(extfvk)
+            .map_err(|e| LegacyCode::Wallet.with_message(e.to_string()))?;
+        (ufvk, "sapling", address)
+    };
 
     // Check if the key is already known to the wallet.
     let existing_account = wallet
@@ -147,7 +164,7 @@ pub(crate) async fn call<C: Chain>(
 
             wallet
                 .import_account_ufvk(
-                    &format!("Imported Sapling viewing key {address}"),
+                    &format!("Imported {address_type} viewing key {address}"),
                     &ufvk,
                     &birthday,
                     AccountPurpose::ViewOnly,
@@ -158,7 +175,7 @@ pub(crate) async fn call<C: Chain>(
     }
 
     Ok(ResultType {
-        address_type: "sapling".to_string(),
+        address_type: address_type.to_string(),
         address,
     })
 }
@@ -167,7 +184,7 @@ pub(crate) async fn call<C: Chain>(
 mod tests {
     use super::*;
     use zcash_keys::encoding::encode_extended_full_viewing_key;
-    use zcash_protocol::constants;
+    use zcash_protocol::{consensus::MAIN_NETWORK, constants};
 
     /// Derives a test extended full viewing key from seed [0; 32] and encodes it.
     fn encoded_mainnet_extfvk() -> String {
@@ -254,6 +271,21 @@ mod tests {
 
         // Testnet Sapling addresses start with "ztestsapling1".
         assert!(address.starts_with("ztestsapling1"));
+    }
+
+    #[test]
+    fn decode_valid_mainnet_ufvk() {
+        let extfvk = decode_extended_full_viewing_key(
+            constants::mainnet::HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY,
+            &encoded_mainnet_extfvk(),
+        )
+        .unwrap();
+        let encoded = UnifiedFullViewingKey::from_sapling_extended_full_viewing_key(extfvk)
+            .unwrap()
+            .encode(&MAIN_NETWORK);
+
+        let (_, address) = decode_unified_vkey_and_address(&MAIN_NETWORK, &encoded).unwrap();
+        assert!(address.starts_with("u1"));
     }
 
     #[test]

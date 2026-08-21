@@ -6,7 +6,7 @@ use spendability_pir_client::{P2pPirNode, SpendClient, WitnessClient, ZcashNetwo
 use tokio::{pin, select, task::AbortHandle};
 use zcash_client_backend::data_api::WalletRead;
 use zcash_client_sqlite::PirIronwoodWitness;
-use zcash_protocol::consensus::{BlockHeight, NetworkType};
+use zcash_protocol::consensus::{BlockHeight, NetworkType, NetworkUpgrade, Parameters as _};
 
 use crate::{
     cli::StartCmd,
@@ -25,6 +25,16 @@ use crate::{
 };
 
 const PIR_STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+fn first_unchecked_ironwood_height(
+    last_scanned: BlockHeight,
+    activation: BlockHeight,
+) -> BlockHeight {
+    std::cmp::max(
+        BlockHeight::from_u32(u32::from(last_scanned).saturating_add(1)),
+        activation,
+    )
+}
 
 async fn try_pir_shortcut<C: Chain>(
     config: &ZalletConfig,
@@ -67,7 +77,16 @@ async fn try_pir_shortcut<C: Chain>(
         drop(db_handle);
 
         let spend = SpendClient::connect_p2p(session.clone(), network).await?;
-        if spend.earliest_height() > u64::from(u32::from(last_scanned)) + 1 {
+        let ironwood_activation = chain
+            .params()
+            .activation_height(NetworkUpgrade::Nu6_3)
+            .context("NU6.3 activation height is not configured")?;
+        if spend.earliest_height()
+            > u64::from(u32::from(first_unchecked_ironwood_height(
+                last_scanned,
+                ironwood_activation,
+            )))
+        {
             bail!("PIR nullifier retention does not cover the unscanned range");
         }
         for note in &notes {
@@ -371,9 +390,9 @@ mod tests {
     };
     use std::time::Duration;
 
-    use rusqlite::Connection;
-
-    use super::{StartCmd, StartupTaskOwner, supervise_zallet_tasks};
+    use super::{
+        StartCmd, StartupTaskOwner, first_unchecked_ironwood_height, supervise_zallet_tasks,
+    };
     use crate::{
         components::{
             TaskHandle,
@@ -382,6 +401,7 @@ mod tests {
         config::ZalletConfig,
         error::{Error, ErrorKind},
     };
+    use rusqlite::Connection;
 
     /// The error returned when the fake factory cannot admit its backend.
     const BACKEND_ADMISSION_FAILURE: &str = "required chain backend service is unavailable";
@@ -389,6 +409,19 @@ mod tests {
     const SUPERVISED_TASK_FAILURE: &str = "supervised task failed";
     /// A compatible prior version that makes a database reopen observably record this build.
     const PRIOR_ZALLET_VERSION: &str = "0.1.0-beta.0";
+
+    #[test]
+    fn pir_coverage_starts_at_ironwood_or_after_the_wallet_tip() {
+        let activation = 100.into();
+        assert_eq!(
+            first_unchecked_ironwood_height(50.into(), activation),
+            activation
+        );
+        assert_eq!(
+            first_unchecked_ironwood_height(150.into(), activation),
+            151.into()
+        );
+    }
 
     struct AdmissionRejectingFactory {
         build_was_attempted: Arc<AtomicBool>,
