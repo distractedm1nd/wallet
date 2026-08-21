@@ -662,10 +662,12 @@ synchronously, returning the txid rather than an operation id.
 - `account` (string, required) The UUID of the account to send the funds
   from.
 - `fund_source` (string or array, required) Where funds may be drawn
-  from. One of the strings `"orchard"`, `"sapling"`,
+  from. One of the strings `"orchard"`, `"ironwood"`, `"sapling"`,
   `"any_transparent"`, or an array of transparent address strings. Each
   source is isolating: a source that cannot cover the payment reports
   insufficient funds rather than drawing on the account's other funds.
+  `"ironwood"` may be used while the wallet is catching up if startup
+  prepared verified PIR witnesses. Other sources require a synchronized wallet.
   `"orchard"` includes the Ironwood pool, where an account's
   Orchard-receiver funds are held once NU6.3 activates.
 - `recipients` (array, required) An array of JSON objects representing

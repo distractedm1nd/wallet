@@ -10,7 +10,7 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 #[cfg(zallet_build = "wallet")]
-use zcash_protocol::consensus::Parameters;
+use {zcash_client_backend::data_api::WalletRead, zcash_protocol::consensus::Parameters};
 
 use crate::components::{
     chain::Chain,
@@ -22,7 +22,9 @@ use crate::components::{
 use {
     super::asyncop::{OperationId, OperationQueue},
     crate::components::{
-        json_rpc::payments::AmountParameter, keystore::KeyStore, sync::WalletDecryptorHandle,
+        json_rpc::{payments::AmountParameter, server::LegacyCode},
+        keystore::KeyStore,
+        sync::{SyncStatus, WalletDecryptorHandle},
     },
 };
 
@@ -773,10 +775,12 @@ pub(crate) trait WalletRpc {
     /// - `account` (string, required) The UUID of the account to send the funds
     ///   from.
     /// - `fund_source` (string or array, required) Where funds may be drawn
-    ///   from. One of the strings `"orchard"`, `"sapling"`,
+    ///   from. One of the strings `"orchard"`, `"ironwood"`, `"sapling"`,
     ///   `"any_transparent"`, or an array of transparent address strings. Each
     ///   source is isolating: a source that cannot cover the payment reports
     ///   insufficient funds rather than drawing on the account's other funds.
+    ///   `"ironwood"` may be used while the wallet is catching up if startup
+    ///   prepared verified PIR witnesses. Other sources require a synchronized wallet.
     ///   `"orchard"` includes the Ironwood pool, where an account's
     ///   Orchard-receiver funds are held once NU6.3 activates.
     /// - `recipients` (array, required) An array of JSON objects representing
@@ -1441,6 +1445,25 @@ impl<C: Chain> WalletRpcServer for WalletRpcImpl<C> {
         minconf: Option<u32>,
         privacy_policy: String,
     ) -> z_send_from_account::Response {
+        match self.general.sync_status.status() {
+            SyncStatus::Synced => (),
+            SyncStatus::CatchingUp { .. } if fund_source.as_str() == Some("ironwood") => {
+                if self
+                    .wallet()
+                    .await?
+                    .as_ref()
+                    .pir_ironwood_anchor_height()
+                    .map_err(|error| LegacyCode::Database.with_message(error.to_string()))?
+                    .is_none()
+                {
+                    return Err(LegacyCode::Wallet
+                        .with_static("PIR witnesses are not available for an Ironwood send"));
+                }
+            }
+            SyncStatus::CatchingUp { .. } | SyncStatus::Recovering { .. } => {
+                self.general.ensure_synced()?;
+            }
+        }
         z_send_from_account::call(
             self.general.wallet.clone(),
             self.keystore.clone(),

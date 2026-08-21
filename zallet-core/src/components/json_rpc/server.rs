@@ -1,15 +1,15 @@
 //! JSON-RPC server that is compatible with `zcashd`.
 
 use jsonrpsee::{
-    RpcModule,
     server::{RpcServiceBuilder, Server},
     tracing::info,
 };
+use std::path::PathBuf;
 use tokio::task::JoinHandle;
 
 use crate::{
     components::{chain::Chain, database::Database, sync::SyncStatusReader},
-    config::ZalletConfig,
+    config::{RpcSection, ZalletConfig},
     error::{Error, ErrorKind},
     fl,
 };
@@ -34,14 +34,18 @@ mod rpc_call_compatibility;
 type ServerTask = JoinHandle<Result<(), Error>>;
 
 pub(crate) async fn spawn<C: Chain>(
-    config: ZalletConfig,
+    config: RpcSection,
+    datadir: PathBuf,
+    zallet_config: ZalletConfig,
     wallet: Database,
     #[cfg(zallet_build = "wallet")] keystore: KeyStore,
     chain: C,
     #[cfg(zallet_build = "wallet")] decryptor: WalletDecryptorHandle,
     sync_status: SyncStatusReader,
 ) -> Result<ServerTask, Error> {
-    let rpc = config.rpc.clone();
+    // Caller should make sure `bind` only contains a single address (for now).
+    assert_eq!(config.bind.len(), 1);
+    let listen_addr = config.bind[0];
 
     // Warm the proving caches in the background, so the first `pczt_prove` or
     // `pczt_extract` call does not pay the multi-second key-generation cost
@@ -56,8 +60,8 @@ pub(crate) async fn spawn<C: Chain>(
         chain.clone(),
         decryptor,
         sync_status.clone(),
-        rpc.async_operation_limit(),
-        config.clone(),
+        config.async_operation_limit(),
+        zallet_config,
     );
     let rpc_impl = RpcImpl::new(
         wallet,
@@ -67,44 +71,11 @@ pub(crate) async fn spawn<C: Chain>(
         sync_status,
     );
 
-    #[allow(unused_mut)]
-    let mut rpc_module = rpc_impl.into_rpc();
-    #[cfg(zallet_build = "wallet")]
-    rpc_module
-        .merge(wallet_rpc_impl.into_rpc())
-        .map_err(|e| ErrorKind::Init.context(e))?;
-
-    spawn_module(&config, rpc_module).await
-}
-
-pub(crate) async fn spawn_pir_only(
-    config: ZalletConfig,
-    wallet: Database,
-) -> Result<ServerTask, Error> {
-    let mut rpc_module = RpcModule::new((wallet, config.clone()));
-    rpc_module
-        .register_async_method("z_getspendablebalance", |_, context, _| async move {
-            super::methods::z_get_spendable_balance::call(&context.0, &context.1).await
-        })
-        .map_err(|e| ErrorKind::Init.context(e))?;
-
-    spawn_module(&config, rpc_module).await
-}
-
-async fn spawn_module<Context: Send + Sync + 'static>(
-    config: &ZalletConfig,
-    rpc_module: RpcModule<Context>,
-) -> Result<ServerTask, Error> {
-    let datadir = config.datadir().to_path_buf();
-    let rpc = &config.rpc;
-    // Caller should make sure `bind` only contains a single address (for now).
-    assert_eq!(rpc.bind.len(), 1);
-    let listen_addr = rpc.bind[0];
-    let timeout = rpc.timeout();
+    let timeout = config.timeout();
 
     // The cookie username is reserved. Reject the config before writing a cookie file we
     // would only have to tear down again.
-    if rpc.auth.iter().any(|a| a.user == cookie::COOKIE_USER) {
+    if config.auth.iter().any(|a| a.user == cookie::COOKIE_USER) {
         return Err(ErrorKind::Init
             .context(fl!(
                 "err-init-rpc-auth-cookie-user-reserved",
@@ -118,7 +89,7 @@ async fn spawn_module<Context: Send + Sync + 'static>(
 
     let http_middleware = tower::ServiceBuilder::new()
         .layer(
-            authorization::AuthorizationLayer::new(rpc.auth.clone(), cookie)
+            authorization::AuthorizationLayer::new(config.auth, cookie)
                 .map_err(|()| ErrorKind::Init.context(fl!("err-init-rpc-auth-invalid")))?,
         )
         .layer(http_request_compatibility::HttpRequestMiddlewareLayer::new())
@@ -146,6 +117,13 @@ async fn spawn_module<Context: Send + Sync + 'static>(
         .local_addr()
         .map_err(|e| ErrorKind::Init.context(e))?;
     info!("Opened RPC endpoint at {}", addr);
+
+    #[allow(unused_mut)]
+    let mut rpc_module = rpc_impl.into_rpc();
+    #[cfg(zallet_build = "wallet")]
+    rpc_module
+        .merge(wallet_rpc_impl.into_rpc())
+        .map_err(|e| ErrorKind::Init.context(e))?;
 
     let server_task = crate::spawn!("JSON-RPC server", async move {
         // Hold the cookie guard until the server stops (or the task is cancelled).

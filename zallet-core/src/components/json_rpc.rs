@@ -70,38 +70,6 @@ impl BindPolicy {
 pub(crate) struct JsonRpc {}
 
 impl JsonRpc {
-    pub(crate) async fn spawn_pir_only(
-        config: &ZalletConfig,
-        db: Database,
-    ) -> Result<TaskHandle, Error> {
-        let rpc = config.rpc.clone();
-        if rpc.bind.len() != 1 {
-            return Err(ErrorKind::Init
-                .context("PIR-only mode requires exactly one RPC bind address")
-                .into());
-        }
-        match BindPolicy::for_addr(&rpc.bind[0], rpc.allow_insecure_remote_bind()) {
-            BindPolicy::Loopback => (),
-            BindPolicy::InsecureRemote => warn!(
-                "{}",
-                fl!(
-                    "warn-init-rpc-bind-insecure-remote",
-                    addr = rpc.bind[0].to_string()
-                )
-            ),
-            BindPolicy::Refused => {
-                return Err(ErrorKind::Init
-                    .context(fl!(
-                        "err-init-rpc-bind-not-loopback",
-                        addr = rpc.bind[0].to_string()
-                    ))
-                    .into());
-            }
-        }
-        info!("Spawning PIR-only RPC server");
-        server::spawn_pir_only(config.clone(), db).await
-    }
-
     pub(crate) async fn spawn<C: Chain>(
         config: &ZalletConfig,
         db: Database,
@@ -139,6 +107,8 @@ impl JsonRpc {
             info!("Spawning RPC server");
             info!("Trying to open RPC endpoint at {}...", rpc.bind[0]);
             server::spawn(
+                rpc,
+                config.datadir().to_path_buf(),
                 config.clone(),
                 db,
                 #[cfg(zallet_build = "wallet")]

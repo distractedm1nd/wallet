@@ -61,8 +61,8 @@ async fn try_pir_shortcut<C: Chain>(
     let result = tokio::time::timeout(PIR_STARTUP_TIMEOUT, async {
         let session = client.session().await?;
         let health = session.health().await?;
-        if health.nullifier.phase != "serving" || health.witness.phase != "serving" {
-            bail!("PIR provider is not serving");
+        if health.nullifier.phase != "serving" {
+            bail!("PIR nullifier provider is not serving");
         }
 
         let db_handle = db.handle().await?;
@@ -89,10 +89,17 @@ async fn try_pir_shortcut<C: Chain>(
         {
             bail!("PIR nullifier retention does not cover the unscanned range");
         }
+        let mut unspent_notes = Vec::with_capacity(notes.len());
         for note in &notes {
-            if spend.is_spent(note.nullifier()).await? {
-                bail!("PIR reports a wallet note as spent");
+            if !spend.is_spent(note.nullifier()).await? {
+                unspent_notes.push(note);
             }
+        }
+        if unspent_notes.is_empty() {
+            return Ok(());
+        }
+        if health.witness.phase != "serving" {
+            bail!("PIR witness provider is not serving");
         }
 
         let witness_client = WitnessClient::connect_p2p(session, network).await?;
@@ -113,18 +120,18 @@ async fn try_pir_shortcut<C: Chain>(
             .context("PIR anchor is above the chain tip")?;
         let chain_root = chain_state.final_ironwood_tree().root().to_bytes();
 
-        for note in &notes {
+        for note in &unspent_notes {
             if note.mined_height() > anchor_height {
                 bail!("PIR anchor predates a wallet note");
             }
         }
-        let positions = notes
+        let positions = unspent_notes
             .iter()
             .map(|note| u64::from(note.position()))
             .collect::<Vec<_>>();
         let fetched_witnesses = witness_client.get_witnesses(&positions).await?;
-        let mut witnesses = Vec::with_capacity(notes.len());
-        for (note, witness) in notes.iter().zip(fetched_witnesses) {
+        let mut witnesses = Vec::with_capacity(unspent_notes.len());
+        for (note, witness) in unspent_notes.into_iter().zip(fetched_witnesses) {
             if witness.anchor_root != chain_root {
                 bail!("PIR witness root does not match the chain");
             }
@@ -253,16 +260,6 @@ async fn supervise_zallet_tasks(
 }
 
 impl StartCmd {
-    async fn run_pir_only(&self) -> Result<(), Error> {
-        let config = APP.config();
-        let _lock = config.lock_datadir()?;
-        let db = Database::open(&config).await?;
-        JsonRpc::spawn_pir_only(&config, db)
-            .await?
-            .await
-            .expect("unexpected panic in the PIR-only RPC task")
-    }
-
     /// Runs `zallet start` against the chain backend produced by `factory`.
     pub(crate) async fn run_with<F: ChainFactory>(factory: &F) -> Result<(), Error> {
         let config = APP.config();
@@ -378,11 +375,7 @@ impl StartCmd {
 
 impl AsyncRunnable for StartCmd {
     async fn run(&self) -> Result<(), Error> {
-        if self.pir_only {
-            self.run_pir_only().await
-        } else {
-            crate::application::chain_runtime().run_start().await
-        }
+        crate::application::chain_runtime().run_start().await
     }
 }
 

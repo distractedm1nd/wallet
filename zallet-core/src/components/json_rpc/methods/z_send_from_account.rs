@@ -40,7 +40,7 @@ pub(crate) type Response = RpcResult<ResultType>;
 pub(crate) type ResultType = SendResult;
 
 pub(super) const PARAM_ACCOUNT_DESC: &str = "The UUID of the account to send the funds from.";
-pub(super) const PARAM_FUND_SOURCE_DESC: &str = "Where funds may be drawn from: \"orchard\", \"sapling\", \"any_transparent\", or an array \
+pub(super) const PARAM_FUND_SOURCE_DESC: &str = "Where funds may be drawn from: \"orchard\", \"ironwood\", \"sapling\", \"any_transparent\", or an array \
      of transparent addresses.";
 pub(super) const PARAM_RECIPIENTS_DESC: &str =
     "An array of JSON objects representing the amounts to send.";
