@@ -1,19 +1,14 @@
 //! `start` subcommand
 
 use abscissa_core::{FrameworkError, Runnable, config};
-use anyhow::{Context, bail};
-use spendability_pir_client::{P2pPirNode, SpendClient, WitnessClient, ZcashNetwork};
 use tokio::{pin, select, task::AbortHandle};
-use zcash_client_backend::data_api::WalletRead;
-use zcash_client_sqlite::PirIronwoodWitness;
-use zcash_protocol::consensus::{BlockHeight, NetworkType, NetworkUpgrade, Parameters as _};
 
 use crate::{
     cli::StartCmd,
     commands::AsyncRunnable,
     components::{
         TaskHandle,
-        chain::{Chain, ChainFactory, ChainView, check_consensus_compatibility},
+        chain::{ChainFactory, check_consensus_compatibility},
         database::Database,
         json_rpc::JsonRpc,
         sync::{WalletSync, status},
@@ -23,136 +18,6 @@ use crate::{
     fl,
     prelude::*,
 };
-
-const PIR_STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
-
-fn first_unchecked_ironwood_height(
-    last_scanned: BlockHeight,
-    activation: BlockHeight,
-) -> BlockHeight {
-    std::cmp::max(
-        BlockHeight::from_u32(u32::from(last_scanned).saturating_add(1)),
-        activation,
-    )
-}
-
-async fn try_pir_shortcut<C: Chain>(
-    config: &ZalletConfig,
-    db: &Database,
-    chain: &C,
-) -> anyhow::Result<()> {
-    if config.pir.bootstrap_peers.is_empty() {
-        return Ok(());
-    }
-
-    let network = match config.consensus.network {
-        NetworkType::Main => ZcashNetwork::Main,
-        NetworkType::Test => ZcashNetwork::Test,
-        NetworkType::Regtest => bail!("PIR does not support regtest"),
-    };
-    tokio::fs::create_dir_all(config.pir_identity_dir()).await?;
-    let (node, client) = P2pPirNode::spawn(
-        config.pir_identity_dir(),
-        config.pir.bootstrap_peers.clone(),
-        network,
-    )
-    .await?;
-
-    let result = tokio::time::timeout(PIR_STARTUP_TIMEOUT, async {
-        let session = client.session().await?;
-        let health = session.health().await?;
-        if health.nullifier.phase != "serving" {
-            bail!("PIR nullifier provider is not serving");
-        }
-
-        let db_handle = db.handle().await?;
-        let notes = db_handle.pir_ironwood_notes()?;
-        if notes.is_empty() {
-            return Ok(());
-        }
-        let last_scanned = db_handle
-            .block_fully_scanned()?
-            .context("wallet has not scanned any blocks")?
-            .block_height();
-        drop(db_handle);
-
-        let spend = SpendClient::connect_p2p(session.clone(), network).await?;
-        let ironwood_activation = chain
-            .params()
-            .activation_height(NetworkUpgrade::Nu6_3)
-            .context("NU6.3 activation height is not configured")?;
-        if spend.earliest_height()
-            > u64::from(u32::from(first_unchecked_ironwood_height(
-                last_scanned,
-                ironwood_activation,
-            )))
-        {
-            bail!("PIR nullifier retention does not cover the unscanned range");
-        }
-        let mut unspent_notes = Vec::with_capacity(notes.len());
-        for note in &notes {
-            if !spend.is_spent(note.nullifier()).await? {
-                unspent_notes.push(note);
-            }
-        }
-        if unspent_notes.is_empty() {
-            return Ok(());
-        }
-        if health.witness.phase != "serving" {
-            bail!("PIR witness provider is not serving");
-        }
-
-        let witness_client = WitnessClient::connect_p2p(session, network).await?;
-        if spend.latest_height() < witness_client.anchor_height() {
-            bail!("PIR datasets do not share a usable snapshot");
-        }
-        let anchor_height = BlockHeight::from_u32(
-            witness_client
-                .anchor_height()
-                .try_into()
-                .context("PIR anchor height exceeds the Zcash height range")?,
-        );
-        let chain_state = chain
-            .snapshot()
-            .await?
-            .tree_state_as_of(anchor_height)
-            .await?
-            .context("PIR anchor is above the chain tip")?;
-        let chain_root = chain_state.final_ironwood_tree().root().to_bytes();
-
-        for note in &unspent_notes {
-            if note.mined_height() > anchor_height {
-                bail!("PIR anchor predates a wallet note");
-            }
-        }
-        let positions = unspent_notes
-            .iter()
-            .map(|note| u64::from(note.position()))
-            .collect::<Vec<_>>();
-        let fetched_witnesses = witness_client.get_witnesses(&positions).await?;
-        let mut witnesses = Vec::with_capacity(unspent_notes.len());
-        for (note, witness) in unspent_notes.into_iter().zip(fetched_witnesses) {
-            if witness.anchor_root != chain_root {
-                bail!("PIR witness root does not match the chain");
-            }
-            witnesses.push(PirIronwoodWitness::new(
-                note.note_id(),
-                note.position(),
-                witness.siblings,
-            ));
-        }
-
-        db.handle()
-            .await?
-            .replace_pir_ironwood_witnesses(anchor_height, chain_root, &witnesses)?;
-        Ok::<_, anyhow::Error>(())
-    })
-    .await
-    .unwrap_or_else(|_| Err(anyhow::anyhow!("PIR startup timed out")));
-
-    node.shutdown().await;
-    result
-}
 
 #[cfg(zallet_build = "wallet")]
 use crate::components::keystore::KeyStore;
@@ -308,9 +173,6 @@ impl StartCmd {
                 ErrorKind::Init.context(format!("failed to disable stale PIR state: {error}"))
             })?;
         }
-        if let Err(error) = try_pir_shortcut(config, &db, &chain).await {
-            warn!(%error, "PIR shortcut unavailable; continuing with ordinary sync");
-        }
         #[cfg(zallet_build = "wallet")]
         let keystore = KeyStore::new(config, db.clone())?;
 
@@ -401,9 +263,9 @@ mod tests {
     };
     use std::time::Duration;
 
-    use super::{
-        StartCmd, StartupTaskOwner, first_unchecked_ironwood_height, supervise_zallet_tasks,
-    };
+    use rusqlite::Connection;
+
+    use super::{StartCmd, StartupTaskOwner, supervise_zallet_tasks};
     use crate::{
         components::{
             TaskHandle,
@@ -412,7 +274,6 @@ mod tests {
         config::ZalletConfig,
         error::{Error, ErrorKind},
     };
-    use rusqlite::Connection;
 
     /// The error returned when the fake factory cannot admit its backend.
     const BACKEND_ADMISSION_FAILURE: &str = "required chain backend service is unavailable";
@@ -420,19 +281,6 @@ mod tests {
     const SUPERVISED_TASK_FAILURE: &str = "supervised task failed";
     /// A compatible prior version that makes a database reopen observably record this build.
     const PRIOR_ZALLET_VERSION: &str = "0.1.0-beta.0";
-
-    #[test]
-    fn pir_coverage_starts_at_ironwood_or_after_the_wallet_tip() {
-        let activation = 100.into();
-        assert_eq!(
-            first_unchecked_ironwood_height(50.into(), activation),
-            activation
-        );
-        assert_eq!(
-            first_unchecked_ironwood_height(150.into(), activation),
-            151.into()
-        );
-    }
 
     struct AdmissionRejectingFactory {
         build_was_attempted: Arc<AtomicBool>,

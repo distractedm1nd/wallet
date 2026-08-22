@@ -28,8 +28,8 @@ be considered breaking changes.
 ### Added
 
 - Experimental `pir.bootstrap_peers` configuration for checking known Ironwood
-  notes and fetching spend witnesses over Zakura during startup. Failures fall
-  back to ordinary wallet synchronization.
+  notes and fetching spend witnesses over Zakura when requested. Failures do not
+  affect ordinary wallet synchronization.
 - `zallet import-address` CLI command for importing a transparent address as
   watch-only, given the bare address string, its hex-encoded public key
   (P2PKH), or its redeem script (P2SH). A bare-address import stores no key

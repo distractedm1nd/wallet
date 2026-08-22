@@ -25,10 +25,12 @@ use crate::{
                 AmountParameter, SendResult, build_request, confirmations_policy_for_minconf,
                 parse_privacy_policy, verify_and_broadcast_transactions,
             },
+            pir::Pir,
             server::LegacyCode,
             utils::parse_account_parameter,
         },
         keystore::KeyStore,
+        sync::{SyncStatus, SyncStatusReader},
     },
     fl,
 };
@@ -56,11 +58,17 @@ async fn wallet_handle(wallet: &Database) -> RpcResult<DbHandle> {
         .map_err(|_| jsonrpsee::types::ErrorCode::InternalError.into())
 }
 
+fn should_prepare_pir(status: &SyncStatus, fund_source: &FundSource) -> bool {
+    matches!(status, SyncStatus::CatchingUp { .. }) && *fund_source == FundSource::Ironwood
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn call<C: Chain>(
     wallet: Database,
     keystore: KeyStore,
     chain: C,
+    sync_status: SyncStatusReader,
+    pir: Option<Pir>,
     account: JsonValue,
     fund_source: JsonValue,
     recipients: Vec<AmountParameter>,
@@ -83,6 +91,10 @@ pub(crate) async fn call<C: Chain>(
 
     let fund_source = FundSource::parse(&fund_source, handle.params())?;
 
+    let derivation = account.source().key_derivation().ok_or_else(|| {
+        LegacyCode::InvalidAddressOrKey.with_message(fl!("err-account-no-payment-source"))
+    })?;
+
     // This method sends in one shot, so the caller must acknowledge the privacy
     // implications up front: the policy is required, not optional. It is
     // enforced at proposal time here, and acknowledged again at the signing
@@ -90,6 +102,45 @@ pub(crate) async fn call<C: Chain>(
     let privacy_policy = parse_privacy_policy(Some(&privacy_policy))?;
 
     let confirmations_policy = confirmations_policy_for_minconf(minconf)?;
+
+    let pir_result = if should_prepare_pir(&sync_status.status(), &fund_source)
+        && handle
+            .as_ref()
+            .pir_ironwood_anchor_height()
+            .map_err(|error| LegacyCode::Database.with_message(error.to_string()))?
+            .is_none()
+    {
+        drop(handle);
+        let result = match pir.as_ref() {
+            Some(pir) => pir.prepare_witnesses(&wallet, chain.clone()).await,
+            None => Err(anyhow::anyhow!("PIR is disabled")),
+        };
+        handle = wallet_handle(&wallet).await?;
+        Some(result)
+    } else {
+        None
+    };
+
+    match sync_status.status() {
+        SyncStatus::Synced => (),
+        SyncStatus::CatchingUp { .. } if fund_source == FundSource::Ironwood => {
+            if let Some(result) = pir_result {
+                result.map_err(|error| LegacyCode::Wallet.with_message(error.to_string()))?;
+            }
+            if handle
+                .as_ref()
+                .pir_ironwood_anchor_height()
+                .map_err(|error| LegacyCode::Database.with_message(error.to_string()))?
+                .is_none()
+            {
+                return Err(LegacyCode::Wallet
+                    .with_static("PIR witnesses are not available for an Ironwood send"));
+            }
+        }
+        SyncStatus::CatchingUp { .. } | SyncStatus::Recovering { .. } => {
+            sync_status.ensure_available()?;
+        }
+    }
 
     let (pczt, _required_policy, proposal) = pczt_create::build_pczt(
         &mut handle,
@@ -99,14 +150,6 @@ pub(crate) async fn call<C: Chain>(
         privacy_policy,
         confirmations_policy,
     )?;
-
-    // Derive the full viewing key from the wallet seed while we still hold the
-    // account. The built transaction's transparent outputs are verified against
-    // it before broadcast, because their addresses come from wallet database
-    // records that are not integrity-protected.
-    let derivation = account.source().key_derivation().ok_or_else(|| {
-        LegacyCode::InvalidAddressOrKey.with_message(fl!("err-account-no-payment-source"))
-    })?;
 
     let seed = keystore
         .decrypt_seed(derivation.seed_fingerprint())
@@ -167,4 +210,24 @@ pub(crate) async fn call<C: Chain>(
         vec![txid],
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_prepare_pir;
+    use crate::components::{json_rpc::fund_source::FundSource, sync::SyncStatus};
+
+    #[test]
+    fn only_catch_up_ironwood_sends_prepare_pir() {
+        let catching_up = SyncStatus::CatchingUp {
+            fully_synced: Some(100.into()),
+            tip: 200.into(),
+        };
+        assert!(should_prepare_pir(&catching_up, &FundSource::Ironwood));
+        assert!(!should_prepare_pir(&catching_up, &FundSource::Sapling));
+        assert!(!should_prepare_pir(
+            &SyncStatus::Synced,
+            &FundSource::Ironwood
+        ));
+    }
 }

@@ -9,7 +9,7 @@ use tokio::task::JoinHandle;
 
 use crate::{
     components::{chain::Chain, database::Database, sync::SyncStatusReader},
-    config::{RpcSection, ZalletConfig},
+    config::RpcSection,
     error::{Error, ErrorKind},
     fl,
 };
@@ -18,7 +18,10 @@ use super::methods::{RpcImpl, RpcServer as _};
 
 #[cfg(zallet_build = "wallet")]
 use {
-    super::methods::{WalletRpcImpl, WalletRpcServer},
+    super::{
+        methods::{WalletRpcImpl, WalletRpcServer},
+        pir::Pir,
+    },
     crate::components::{keystore::KeyStore, sync::WalletDecryptorHandle},
 };
 
@@ -36,11 +39,11 @@ type ServerTask = JoinHandle<Result<(), Error>>;
 pub(crate) async fn spawn<C: Chain>(
     config: RpcSection,
     datadir: PathBuf,
-    zallet_config: ZalletConfig,
     wallet: Database,
     #[cfg(zallet_build = "wallet")] keystore: KeyStore,
     chain: C,
     #[cfg(zallet_build = "wallet")] decryptor: WalletDecryptorHandle,
+    #[cfg(zallet_build = "wallet")] pir: Option<Pir>,
     sync_status: SyncStatusReader,
 ) -> Result<ServerTask, Error> {
     // Caller should make sure `bind` only contains a single address (for now).
@@ -59,9 +62,9 @@ pub(crate) async fn spawn<C: Chain>(
         keystore.clone(),
         chain.clone(),
         decryptor,
+        pir,
         sync_status.clone(),
         config.async_operation_limit(),
-        zallet_config,
     );
     let rpc_impl = RpcImpl::new(
         wallet,

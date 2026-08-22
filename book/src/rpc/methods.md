@@ -518,11 +518,11 @@ Only Sapling extended spending keys are supported.
 
 *Only available in wallet builds of Zallet.*
 
-Imports a full viewing key into the wallet.
+Imports a Sapling viewing key into the wallet.
 
-Sapling extended full viewing keys and unified full viewing keys are supported.
-The wallet will track incoming and outgoing transactions for addresses derived
-from this key, but will not have spending authority.
+Only Sapling extended full viewing keys are supported. The wallet will track
+incoming and outgoing transactions for addresses derived from this key, but
+will not have spending authority.
 
 #### Arguments
 
@@ -666,8 +666,9 @@ synchronously, returning the txid rather than an operation id.
   `"any_transparent"`, or an array of transparent address strings. Each
   source is isolating: a source that cannot cover the payment reports
   insufficient funds rather than drawing on the account's other funds.
-  `"ironwood"` may be used while the wallet is catching up if startup
-  prepared verified PIR witnesses. Other sources require a synchronized wallet.
+  `"ironwood"` may be used while the wallet is catching up; Zallet prepares
+  verified PIR witnesses when the send is requested. Other sources require a
+  synchronized wallet.
   `"orchard"` includes the Ironwood pool, where an account's
   Orchard-receiver funds are held once NU6.3 activates.
 - `recipients` (array, required) An array of JSON objects representing

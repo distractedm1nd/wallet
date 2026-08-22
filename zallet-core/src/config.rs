@@ -208,10 +208,6 @@ impl ZalletConfig {
     pub(crate) fn wallet_db_path(&self) -> PathBuf {
         resolve_datadir_path(self.datadir(), self.database.wallet_path())
     }
-
-    pub(crate) fn pir_identity_dir(&self) -> PathBuf {
-        self.datadir().join("pir-zakura")
-    }
 }
 
 /// Settings that affect transactions created by Zallet.
