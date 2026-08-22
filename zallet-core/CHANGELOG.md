@@ -44,6 +44,9 @@ should be considered breaking changes.
 
 ### Changed
 
+- The wallet and chain APIs now use the Zakura wallet and cryptography crate
+  family instead of the upstream librustzcash package family.
+
 - Migrated to `zcash_client_backend`/`zcash_client_sqlite` 0.24.0-rc.7 /
   0.22.0-rc.7 (as of rc.5, output-locking — `lock_outputs`, `unlock_output`,
   `clear_locked_outputs`, `get_locked_outputs` — is extracted off `WalletWrite`

@@ -20,7 +20,10 @@ use crate::components::{
 
 #[cfg(zallet_build = "wallet")]
 use {
-    super::asyncop::{OperationId, OperationQueue},
+    super::{
+        asyncop::{OperationId, OperationQueue},
+        pir::Pir,
+    },
     crate::components::{
         json_rpc::payments::AmountParameter, keystore::KeyStore, sync::WalletDecryptorHandle,
     },
@@ -100,6 +103,8 @@ mod view_transaction;
 mod z_export_viewing_key;
 #[cfg(zallet_build = "wallet")]
 mod z_get_balance_for_account;
+#[cfg(zallet_build = "wallet")]
+pub(crate) mod z_get_spendable_balance;
 #[cfg(zallet_build = "wallet")]
 mod z_get_total_balance;
 #[cfg(zallet_build = "wallet")]
@@ -506,6 +511,11 @@ pub(crate) trait WalletRpc {
     #[method(name = "z_getbalances")]
     async fn get_balances(&self, minconf: Option<u32>) -> get_balances::Response;
 
+    /// Returns the total value, in ZEC, of known Ironwood notes for which the configured
+    /// PIR provider reports no spent nullifier.
+    #[method(name = "z_getspendablebalance")]
+    async fn z_get_spendable_balance(&self) -> z_get_spendable_balance::Response;
+
     /// Returns the account's spendable balance for each value pool ("transparent",
     /// "sapling", and "orchard").
     ///
@@ -766,10 +776,13 @@ pub(crate) trait WalletRpc {
     /// - `account` (string, required) The UUID of the account to send the funds
     ///   from.
     /// - `fund_source` (string or array, required) Where funds may be drawn
-    ///   from. One of the strings `"orchard"`, `"sapling"`,
+    ///   from. One of the strings `"orchard"`, `"ironwood"`, `"sapling"`,
     ///   `"any_transparent"`, or an array of transparent address strings. Each
     ///   source is isolating: a source that cannot cover the payment reports
     ///   insufficient funds rather than drawing on the account's other funds.
+    ///   `"ironwood"` may be used while the wallet is catching up; Zallet prepares
+    ///   verified PIR witnesses when the send is requested. Other sources require a
+    ///   synchronized wallet.
     ///   `"orchard"` includes the Ironwood pool, where an account's
     ///   Orchard-receiver funds are held once NU6.3 activates.
     /// - `recipients` (array, required) An array of JSON objects representing
@@ -1042,6 +1055,7 @@ pub(crate) struct WalletRpcImpl<C: Chain> {
     general: RpcImpl<C>,
     keystore: KeyStore,
     decryptor: WalletDecryptorHandle,
+    pir: Option<Pir>,
     async_ops: OperationQueue,
 }
 
@@ -1053,6 +1067,7 @@ impl<C: Chain> WalletRpcImpl<C> {
         keystore: KeyStore,
         chain_view: C,
         decryptor: WalletDecryptorHandle,
+        pir: Option<Pir>,
         sync_status: SyncStatusReader,
         async_operation_limit: usize,
     ) -> Self {
@@ -1060,6 +1075,7 @@ impl<C: Chain> WalletRpcImpl<C> {
             general: RpcImpl::new(wallet, keystore.clone(), chain_view, sync_status),
             keystore,
             decryptor,
+            pir,
             async_ops: OperationQueue::new(async_operation_limit),
         }
     }
@@ -1287,6 +1303,10 @@ impl<C: Chain> WalletRpcServer for WalletRpcImpl<C> {
         get_balances::call(self.wallet().await?.as_ref(), minconf)
     }
 
+    async fn z_get_spendable_balance(&self) -> z_get_spendable_balance::Response {
+        z_get_spendable_balance::call(&self.general.wallet, self.pir.as_ref()).await
+    }
+
     async fn z_get_balance_for_account(
         &self,
         account: JsonValue,
@@ -1431,6 +1451,8 @@ impl<C: Chain> WalletRpcServer for WalletRpcImpl<C> {
             self.general.wallet.clone(),
             self.keystore.clone(),
             self.chain().await?,
+            self.general.sync_status.clone(),
+            self.pir.clone(),
             account,
             fund_source,
             recipients,

@@ -14,7 +14,7 @@ use crate::{
         sync::{WalletSync, status},
     },
     config::ZalletConfig,
-    error::Error,
+    error::{Error, ErrorKind},
     fl,
     prelude::*,
 };
@@ -167,6 +167,12 @@ impl StartCmd {
         let shutdown_height = check_consensus_compatibility(&chain).await?;
 
         let db = Database::open(config).await?;
+        {
+            let mut db_handle = db.handle().await?;
+            db_handle.clear_pir_ironwood_witnesses().map_err(|error| {
+                ErrorKind::Init.context(format!("failed to disable stale PIR state: {error}"))
+            })?;
+        }
         #[cfg(zallet_build = "wallet")]
         let keystore = KeyStore::new(config, db.clone())?;
 

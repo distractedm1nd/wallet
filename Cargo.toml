@@ -19,6 +19,7 @@ categories = ["cryptography::cryptocurrencies"]
 async-trait = "0.1"
 futures = "0.3"
 tokio = "1"
+spendability-pir-client = { path = "../spendability-pir/crates/client" }
 
 # Data structures
 nonempty = "0.11"
@@ -120,8 +121,8 @@ tracing-subscriber = "0.3"
 zcash_protocol = "0.10.0"
 
 # Zcash payment protocols
-orchard = "0.15.0"
-pczt = { version = "0.9.1", features = [
+orchard = { package = "zakura-orchard", version = "=1.0.0-rc.1" }
+pczt = { package = "zakura-pczt", path = "../wallet-libraries/librustzcash/pczt", features = [
     "orchard",
     "sapling",
     "transparent",
@@ -130,17 +131,17 @@ pczt = { version = "0.9.1", features = [
     "spend-finalizer",
     "tx-extractor",
 ] }
-sapling = { package = "sapling-crypto", version = "0.7" }
+sapling = { package = "zakura-sapling-crypto", version = "=1.0.0-rc.1" }
 transparent = { package = "zcash_transparent", version = "0.10.0" }
 zcash_encoding = "0.4"
-zcash_keys = { version = "0.16.0", features = [
+zcash_keys = { package = "zakura-keys", version = "=1.0.0-rc.1", features = [
     "transparent-inputs",
     "sapling",
     "orchard",
     "transparent-key-encoding",
 ] }
-zcash_primitives = "0.30.0"
-zcash_proofs = "0.30.0"
+zcash_primitives = { package = "zakura-primitives", version = "=1.0.0-rc.1" }
+zcash_proofs = { package = "zakura-proofs", version = "=1.0.0-rc.1" }
 zcash_script = "0.4.3"
 zcash_spec = "0.2"
 secp256k1 = { version = "0.29", features = ["global-context", "recovery"] }
@@ -159,8 +160,8 @@ schemerz-rusqlite = "0.370.0"
 shardtree = "0.7"
 time = "0.3"
 uuid = "1"
-zcash_client_backend = "=0.24.0-rc.7"
-zcash_client_sqlite = "=0.22.0-rc.7"
+zcash_client_backend = { package = "zakura-client-backend", path = "../wallet-libraries/librustzcash/zcash_client_backend" }
+zcash_client_sqlite = { package = "zakura-client-sqlite", path = "../wallet-libraries/librustzcash/zcash_client_sqlite" }
 zcash_note_encryption = "0.4"
 zip32 = "0.2"
 bip32 = "0.2"

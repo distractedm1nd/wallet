@@ -24,6 +24,8 @@ use super::server::LegacyCode;
 pub(super) enum FundSource {
     /// Spend only Orchard-family notes.
     Orchard,
+    /// Spend only Ironwood notes.
+    Ironwood,
     /// Spend only Sapling notes.
     Sapling,
     /// Spend any of the account's transparent funds.
@@ -46,6 +48,7 @@ impl FundSource {
         match value {
             JsonValue::String(s) => match s.as_str() {
                 "orchard" => Ok(Self::Orchard),
+                "ironwood" => Ok(Self::Ironwood),
                 "sapling" => Ok(Self::Sapling),
                 "any_transparent" => Ok(Self::AnyTransparent),
                 other => Err(LegacyCode::InvalidParameter
@@ -109,6 +112,7 @@ impl FundSource {
             Self::Orchard => {
                 SpendPolicy::shielded_pools([ShieldedPool::Orchard, ShieldedPool::Ironwood])
             }
+            Self::Ironwood => SpendPolicy::shielded_pools([ShieldedPool::Ironwood]),
             Self::Sapling => SpendPolicy::shielded_pools([ShieldedPool::Sapling]),
             Self::AnyTransparent => SpendPolicy::shielded_pools([])
                 .with_transparent(TransparentSpendPolicy::any_account_addr()),
@@ -160,6 +164,10 @@ mod tests {
             FundSource::Orchard,
         );
         assert_eq!(
+            FundSource::parse(&JsonValue::from("ironwood"), &params).unwrap(),
+            FundSource::Ironwood,
+        );
+        assert_eq!(
             FundSource::parse(&JsonValue::from("sapling"), &params).unwrap(),
             FundSource::Sapling,
         );
@@ -172,7 +180,6 @@ mod tests {
     #[test]
     fn rejects_an_unknown_source() {
         let params = test_params();
-        assert!(FundSource::parse(&JsonValue::from("ironwood"), &params).is_err());
         assert!(FundSource::parse(&JsonValue::from("transparent"), &params).is_err());
         assert!(FundSource::parse(&JsonValue::from(7), &params).is_err());
     }
@@ -211,6 +218,11 @@ mod tests {
         // Orchard-receiver funds live in Ironwood once NU6.3 activates.
         assert!(orchard.permits_shielded(ShieldedPool::Ironwood));
         assert!(!orchard.permits_shielded(ShieldedPool::Sapling));
+
+        let ironwood = FundSource::Ironwood.spend_policy();
+        assert!(!ironwood.permits_shielded(ShieldedPool::Sapling));
+        assert!(!ironwood.permits_shielded(ShieldedPool::Orchard));
+        assert!(ironwood.permits_shielded(ShieldedPool::Ironwood));
 
         let sapling = FundSource::Sapling.spend_policy();
         assert!(sapling.transparent().is_none());

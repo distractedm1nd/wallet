@@ -14,6 +14,7 @@ categories.workspace = true
 async-trait.workspace = true
 futures.workspace = true
 tokio = { workspace = true, features = ["fs", "io-std", "io-util", "rt-multi-thread", "signal"] }
+spendability-pir-client.workspace = true
 
 # Data structures
 nonempty.workspace = true

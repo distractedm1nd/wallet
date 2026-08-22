@@ -31,6 +31,8 @@ mod fund_source;
 pub(crate) mod methods;
 #[cfg(zallet_build = "wallet")]
 pub(crate) mod payments;
+#[cfg(zallet_build = "wallet")]
+mod pir;
 pub(crate) mod server;
 pub(crate) mod utils;
 
@@ -106,6 +108,8 @@ impl JsonRpc {
             }
             info!("Spawning RPC server");
             info!("Trying to open RPC endpoint at {}...", rpc.bind[0]);
+            #[cfg(zallet_build = "wallet")]
+            let pir = pir::Pir::start(config);
             server::spawn(
                 rpc,
                 config.datadir().to_path_buf(),
@@ -115,6 +119,8 @@ impl JsonRpc {
                 chain,
                 #[cfg(zallet_build = "wallet")]
                 decryptor,
+                #[cfg(zallet_build = "wallet")]
+                pir,
                 sync_status,
             )
             .await
